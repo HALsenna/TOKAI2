@@ -44,6 +44,7 @@
 
 # Visual Studio cache directory
 .vs/
+.idea/
 
 # Gradle cache directory
 .gradle/
@@ -111,4 +112,6 @@ InitTestScene*.unity*
 /[Aa]ssets/[Ii]nit[Tt]est[Ss]cene*.unity*
 
 # Auto-generated cache in Assets folder
+/Tools/uv/
+/Tools/python/
 /[Aa]ssets/[Ss]ceneDependencyCache*

@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
@@ -13,7 +13,7 @@ namespace Daidatsugoku
         private Font font;
         private Text turn, score, message, mode, handoffText, resultText;
         private GameObject actions, handoff, result;
-        private Button move, place, remove, forward;
+        private Button deploy, move, place, remove, forward;
 
         public void Initialize(GameManager manager)
         {
@@ -34,12 +34,13 @@ namespace Daidatsugoku
             mode = Label("", sidebar, 20, 260, 320, 38, 21);
             actions = new GameObject("ActionPanel", typeof(RectTransform));
             actions.transform.SetParent(sidebar, false); Stretch(actions.GetComponent<RectTransform>());
-            move = Button("移動", actions.transform, 20, 310, 320, game.SelectMove);
-            place = Button("柵を設置", actions.transform, 20, 370, 320, game.SelectPlaceFence);
-            remove = Button("柵を破壊", actions.transform, 20, 430, 320, game.SelectRemoveFence);
-            forward = Button("右へ／脱獄 →", actions.transform, 20, 490, 320, game.MoveRightOrEscape);
-            message = Label("", sidebar, 20, 555, 320, 120, 20);
-            Label("操作：左クリックのみ\n同じマスの柵で囚人を保護\n移動は右・上・下／後退不可", sidebar, 20, 695, 320, 85, 17);
+            deploy = Button("駒を配置", actions.transform, 20, 300, 320, game.SelectPlacePrisoner);
+            move = Button("移動", actions.transform, 20, 355, 320, game.SelectMove);
+            place = Button("柵を設置", actions.transform, 20, 410, 320, game.SelectPlaceFence);
+            remove = Button("柵を破壊", actions.transform, 20, 465, 320, game.SelectRemoveFence);
+            forward = Button("右へ／脱獄 →", actions.transform, 20, 520, 320, game.MoveRightOrEscape);
+            message = Label("", sidebar, 20, 580, 320, 105, 20);
+            Label("操作：左クリックのみ\n柵は辺をクリックして設置\n柵より下の同じ縦筋を保護", sidebar, 20, 695, 320, 85, 17);
 
             handoff = Panel("HandoffPanel", canvasObject.transform, new Color(.03f, .05f, .09f, .96f)).gameObject;
             RectTransform handoffCard = CenterCard(handoff.transform);
@@ -71,12 +72,14 @@ namespace Daidatsugoku
                 _ => $"ラウンド {game.Round}：P{game.CurrentPlayer + 1}"
             };
             score.text = "";
-            for (int p = 0; p < 3; p++) score.text += $"P{p + 1}　脱獄 {game.EscapedCount(p)}/3　盤上 {game.OnBoardCount(p)}\n";
+            for (int p = 0; p < 3; p++) score.text += $"P{p + 1}　脱獄 {game.EscapedCount(p)}/3　盤上 {game.OnBoardCount(p)} 手元 {game.ReserveCount(p)}\n";
             message.text = game.Message;
-            mode.text = "選択中：" + (game.Action switch { PlayerAction.Move => "移動", PlayerAction.PlaceFence => "柵を設置", _ => "柵を破壊" });
+            mode.text = "選択中：" + (game.Action switch { PlayerAction.PlacePrisoner => "駒を配置", PlayerAction.Move => "移動", PlayerAction.PlaceFence => "柵を設置", _ => "柵を破壊" });
             actions.SetActive(game.IsPlayerTurn);
-            move.interactable = game.IsPlayerTurn; place.interactable = game.IsPlayerTurn;
-            remove.interactable = game.IsPlayerTurn; forward.interactable = game.IsPlayerTurn && game.Action == PlayerAction.Move;
+            deploy.interactable = game.IsPlayerTurn && game.ReserveCount(game.CurrentPlayer) > 0;
+            bool canAct = game.IsPlayerTurn && !game.MustPlacePrisoner;
+            move.interactable = canAct && game.OnBoardCount(game.CurrentPlayer) > 0; place.interactable = canAct;
+            remove.interactable = canAct; forward.interactable = canAct && game.Action == PlayerAction.Move;
             handoff.SetActive(game.State == GameState.Handoff);
             handoffText.text = $"次のプレイヤー P{game.PendingPlayer + 1} へ\n交代してください。\n準備ができたら開始ボタンを押します。";
             result.SetActive(game.State == GameState.Result);

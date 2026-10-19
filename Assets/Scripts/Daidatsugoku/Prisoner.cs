@@ -9,7 +9,8 @@ namespace Daidatsugoku
         public Vector2Int Cell { get; private set; }
         public bool Captured { get; private set; }
         public bool Escaped { get; private set; }
-        public bool IsOnBoard => !Captured && !Escaped;
+        public bool IsInReserve { get; private set; } = true;
+        public bool IsOnBoard => !IsInReserve && !Captured && !Escaped;
         private GameManager game;
         private Renderer body;
         private Color color;
@@ -20,8 +21,14 @@ namespace Daidatsugoku
             body = GetComponent<Renderer>();
             body.sharedMaterial = manager.Grid.GetMaterial(tint);
             name = $"P{owner + 1}_Prisoner";
+            gameObject.SetActive(false);
         }
 
+        public void Deploy(Vector2Int cell)
+        {
+            if (!IsInReserve) return;
+            Cell = cell; IsInReserve = false; gameObject.SetActive(true);
+        }
         public void MoveTo(Vector2Int cell) => Cell = cell;
         public void SetSelected(bool value) => body.sharedMaterial = game.Grid.GetMaterial(value ? Color.white : color);
         public void Capture() { Captured = true; gameObject.SetActive(false); }

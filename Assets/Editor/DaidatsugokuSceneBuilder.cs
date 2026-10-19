@@ -18,8 +18,8 @@ public static class DaidatsugokuSceneBuilder
         var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
         GameObject root = new("Daidatsugoku"); root.AddComponent<GameManager>();
         Camera camera = Camera.main;
-        camera.transform.position = new Vector3(0, 10, 2.4f); camera.transform.rotation = Quaternion.Euler(90, 0, 0);
-        camera.orthographic = true; camera.orthographicSize = 4.5f;
+        camera.transform.position = new Vector3(0, 12, 4f); camera.transform.rotation = Quaternion.Euler(90, 0, 0);
+        camera.orthographic = true; camera.orthographicSize = 5.5f;
         camera.rect = new Rect(.29f, 0, .71f, 1);
         camera.clearFlags = CameraClearFlags.SolidColor; camera.backgroundColor = new Color(.09f, .12f, .17f);
         camera.gameObject.AddComponent<PhysicsRaycaster>();

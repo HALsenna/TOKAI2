@@ -25,7 +25,7 @@ namespace Daidatsugoku
             int captured = 0;
             foreach (Prisoner prisoner in prisoners)
             {
-                if (!prisoner.IsOnBoard || grid.HasFence(prisoner.Cell)) continue;
+                if (!prisoner.IsOnBoard || grid.IsProtected(prisoner.Cell)) continue;
                 prisoner.Capture(); captured++;
             }
             return captured;

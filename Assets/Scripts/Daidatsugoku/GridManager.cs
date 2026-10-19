@@ -5,17 +5,71 @@ namespace Daidatsugoku
 {
     public sealed class GridManager : MonoBehaviour
     {
-        public const int Width = 5, RowCount = 4;
+        public const int Width = 7, RowCount = 5;
+        private static readonly int[] RowLengths = { 3, 4, 5, 6, 7 };
+        private static readonly int[] RowOffsets = { 2, 1, 1, 0, 0 };
+        private static readonly Vector2Int[] StartingFences =
+        {
+            new(0, 1), new(0, 2), new(2, 2), new(4, 3), new(2, 4)
+        };
         private const float Spacing = 1.6f;
-        private readonly Dictionary<Vector2Int, GameObject> fences = new();
+        private readonly Dictionary<FenceBoundary, GameObject> fences = new();
         private readonly Dictionary<Color, Material> materials = new();
         private Transform generated;
         private GameManager game;
+        private Font boardFont;
 
-        public bool IsInside(Vector2Int c) => c.x >= 0 && c.x < Width && c.y >= 0 && c.y < RowCount;
+        public int GetRowLength(int row) => row >= 0 && row < RowCount ? RowLengths[row] : 0;
+        public bool IsInside(Vector2Int c) => c.x >= 0 && c.x < GetRowLength(c.y);
+        public bool IsExitCell(Vector2Int c) => IsInside(c) && c.x == GetRowLength(c.y) - 1;
+        public int GlobalColumn(Vector2Int c) => c.x + RowOffsets[c.y];
+        public bool CanMove(Vector2Int from, Vector2Int to)
+        {
+            if (!IsInside(from) || !IsInside(to)) return false;
+            if (from.y == to.y) return to.x == from.x + 1;
+            return Mathf.Abs(to.y - from.y) == 1 && GlobalColumn(from) == GlobalColumn(to);
+        }
         public string CellName(Vector2Int c) => $"{(char)('A' + c.y)}{c.x}";
-        public Vector3 WorldPosition(Vector2Int c) => transform.position + new Vector3((c.x - 2) * Spacing, 0, c.y * Spacing);
-        public bool HasFence(Vector2Int c) => fences.ContainsKey(c);
+        public Vector3 WorldPosition(Vector2Int c) => transform.position + new Vector3((GlobalColumn(c) - 3) * Spacing, 0, (RowCount - 1 - c.y) * Spacing);
+        public FenceBoundary BoundaryOf(Vector2Int cell, CellEdge edge)
+        {
+            int column = GlobalColumn(cell);
+            return edge switch
+            {
+                CellEdge.North => new FenceBoundary(column, cell.y),
+                CellEdge.South => new FenceBoundary(column, cell.y + 1),
+                CellEdge.West => new FenceBoundary(column, cell.y, true),
+                _ => new FenceBoundary(column + 1, cell.y, true)
+            };
+        }
+        public bool TryGetCell(int column, int row, out Vector2Int cell)
+        {
+            cell = new Vector2Int(row >= 0 && row < RowCount ? column - RowOffsets[row] : -1, row);
+            return IsInside(cell);
+        }
+        public bool IsValidBoundary(FenceBoundary b)
+        {
+            if (b.Vertical) return TryGetCell(b.Column - 1, b.Line, out _) || TryGetCell(b.Column, b.Line, out _);
+            return TryGetCell(b.Column, b.Line - 1, out _) || TryGetCell(b.Column, b.Line, out _);
+        }
+        public bool HasFence(FenceBoundary b) => fences.ContainsKey(b);
+        // Convenience overload: the north boundary of a cell (not cell occupancy).
+        public bool HasFence(Vector2Int cell) => IsInside(cell) && HasFence(BoundaryOf(cell, CellEdge.North));
+        public bool IsProtected(Vector2Int cell)
+        {
+            if (!IsInside(cell)) return false;
+            for (int line = 0; line <= cell.y; line++)
+                if (HasFence(new FenceBoundary(GlobalColumn(cell), line))) return true;
+            return false;
+        }
+        public FenceBoundary BoundaryAtPoint(Vector2Int cell, Vector3 point)
+        {
+            Vector3 delta = point - WorldPosition(cell);
+            CellEdge edge = Mathf.Abs(delta.x) > Mathf.Abs(delta.z)
+                ? (delta.x > 0 ? CellEdge.East : CellEdge.West)
+                : (delta.z > 0 ? CellEdge.North : CellEdge.South);
+            return BoundaryOf(cell, edge);
+        }
         public int FenceCount => fences.Count;
 
         public Material GetMaterial(Color color)
@@ -37,17 +91,26 @@ namespace Daidatsugoku
             generated = new GameObject("GeneratedBoard").transform;
             generated.SetParent(transform, false);
             for (int row = 0; row < RowCount; row++)
-            for (int x = 0; x < Width; x++)
+            for (int x = 0; x < GetRowLength(row); x++)
             {
                 Vector2Int cell = new(x, row);
-                Color color = (x + row) % 2 == 0 ? new Color(.28f, .34f, .42f) : new Color(.42f, .49f, .57f);
+                Color color = (GlobalColumn(cell) + row) % 2 == 0 ? new Color(.28f, .34f, .42f) : new Color(.42f, .49f, .57f);
                 GameObject tile = Primitive(PrimitiveType.Cube, CellName(cell), WorldPosition(cell), new Vector3(1.45f, .15f, 1.45f), color);
                 tile.AddComponent<GridCell>().Initialize(game, cell);
                 Label(CellName(cell), WorldPosition(cell) + new Vector3(-.5f, .09f, -.5f));
+                if (x == 0) Label("START", WorldPosition(cell) + new Vector3(0, .09f, .15f));
             }
-            GameObject goal = Primitive(PrimitiveType.Cube, "EscapeGoal", WorldPosition(new Vector2Int(4, 0)) + new Vector3(.8f, .1f, 2.4f), new Vector3(.15f, .1f, 6.4f), Color.green);
-            goal.GetComponent<Collider>().enabled = false;
-            Label("GOAL >", WorldPosition(new Vector2Int(4, 0)) + new Vector3(1.2f, .1f, -.8f));
+            for (int row = 0; row < RowCount; row++)
+            {
+                Vector3 edge = WorldPosition(new Vector2Int(GetRowLength(row) - 1, row)) + new Vector3(.8f, .1f, 0);
+                GameObject goal = Primitive(PrimitiveType.Cube, $"EscapeGoal_{(char)('A' + row)}", edge, new Vector3(.1f, .1f, 1.45f), Color.green);
+                goal.GetComponent<Collider>().enabled = false;
+            }
+            Vector3 guardPosition = WorldPosition(new Vector2Int(1, 0)) + new Vector3(0, 0, Spacing);
+            GameObject guardPost = Primitive(PrimitiveType.Cube, "GuardPost", guardPosition, new Vector3(1.45f, .15f, 1.45f), new Color(.17f, .2f, .27f));
+            guardPost.GetComponent<Collider>().enabled = false;
+            Label("監視官", guardPosition + Vector3.up * .09f);
+            foreach (Vector2Int cell in StartingFences) PlaceFence(cell);
         }
 
         public Prisoner CreatePrisoner(int owner, Vector2Int cell, Color color)
@@ -58,19 +121,24 @@ namespace Daidatsugoku
             return prisoner;
         }
 
-        public bool PlaceFence(Vector2Int cell)
+        public bool PlaceFence(Vector2Int cell) => IsInside(cell) && PlaceFence(BoundaryOf(cell, CellEdge.North));
+        public bool PlaceFence(FenceBoundary boundary)
         {
-            if (!IsInside(cell) || HasFence(cell)) return false;
-            GameObject fence = Primitive(PrimitiveType.Cube, $"Fence_{CellName(cell)}", WorldPosition(cell) + new Vector3(0, .4f, .58f), new Vector3(1.2f, .65f, .12f), new Color(.75f, .44f, .19f));
-            fence.AddComponent<GridCell>().Initialize(game, cell);
-            fences.Add(cell, fence);
+            if (!IsValidBoundary(boundary) || HasFence(boundary)) return false;
+            Vector3 position = transform.position + new Vector3((boundary.Column - 3) * Spacing, .3f, (RowCount - 1 - boundary.Line) * Spacing);
+            position += boundary.Vertical ? new Vector3(-Spacing / 2, 0, 0) : new Vector3(0, 0, Spacing / 2);
+            Vector3 scale = boundary.Vertical ? new Vector3(.12f, .45f, 1.45f) : new Vector3(1.45f, .45f, .12f);
+            GameObject fence = Primitive(PrimitiveType.Cube, $"Fence_{boundary}", position, scale, new Color(.95f, .16f, .19f));
+            fence.AddComponent<FenceClick>().Initialize(game, boundary);
+            fences.Add(boundary, fence);
             return true;
         }
 
-        public bool RemoveFence(Vector2Int cell)
+        public bool RemoveFence(Vector2Int cell) => IsInside(cell) && RemoveFence(BoundaryOf(cell, CellEdge.North));
+        public bool RemoveFence(FenceBoundary boundary)
         {
-            if (!fences.TryGetValue(cell, out GameObject fence)) return false;
-            fences.Remove(cell); fence.SetActive(false); Destroy(fence); return true;
+            if (!fences.TryGetValue(boundary, out GameObject fence)) return false;
+            fences.Remove(boundary); fence.SetActive(false); Destroy(fence); return true;
         }
 
         public void RefreshPiecePositions(IReadOnlyList<Prisoner> prisoners)
@@ -106,6 +174,9 @@ namespace Daidatsugoku
             obj.transform.SetParent(generated, false);
             obj.transform.position = position; obj.transform.rotation = Quaternion.Euler(90, 0, 0);
             TextMesh label = obj.AddComponent<TextMesh>();
+            if (boardFont == null) boardFont = Font.CreateDynamicFontFromOSFont(new[] { "Yu Gothic", "Meiryo", "Arial" }, 40);
+            label.font = boardFont;
+            label.GetComponent<MeshRenderer>().sharedMaterial = boardFont.material;
             label.text = text; label.characterSize = .1f; label.fontSize = 40; label.color = Color.white;
             label.anchor = TextAnchor.MiddleCenter;
         }
@@ -113,6 +184,7 @@ namespace Daidatsugoku
         private void OnDestroy()
         {
             foreach (Material material in materials.Values) if (material != null) Destroy(material);
+            if (boardFont != null) Destroy(boardFont);
         }
     }
 }

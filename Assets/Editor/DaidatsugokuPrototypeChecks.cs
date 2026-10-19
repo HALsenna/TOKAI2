@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Linq;
 using Daidatsugoku;
@@ -34,7 +34,7 @@ public static class DaidatsugokuPrototypeChecks
             if (!EditorApplication.isPlaying || game == null) throw new InvalidOperationException("Play mode ended during checks.");
             EditorApplication.QueuePlayerLoopUpdate();
             if (routine.MoveNext()) return;
-            LastReport = "PASS: setup, pointer selection, invalid moves, handoff input lock, fences on occupied cells, duplicate rejection, removal, guard same-cell protection, capture, draw, deck refill, full 3-prisoner victory, result lock, retry.";
+            LastReport = "PASS: stepped 25-cell board, 5 initial boundary fences, shared boundaries, downstream ray protection, offset adjacency, row-specific exits, reserve deployment, pointer selection, input locks, duplicate rejection, removal, capture, draw, deck refill, full victory, retry.";
             Debug.Log(LastReport); Cleanup();
         }
         catch (Exception exception)
@@ -57,21 +57,79 @@ public static class DaidatsugokuPrototypeChecks
         game.OnCellClicked(spare);
     }
 
+    // Legacy movement/guard scenarios start with all pieces deployed.
+    private static void RestartWithDeployedPieces()
+    {
+        game.RestartGame();
+        for (int row = 0; row < GridManager.RowCount; row++)
+        for (int x = 0; x < game.Grid.GetRowLength(row); x++) game.Grid.RemoveFence(new Vector2Int(x, row));
+        foreach (Prisoner prisoner in game.Prisoners) prisoner.Deploy(new Vector2Int(0, prisoner.Owner));
+        game.Grid.RefreshPiecePositions(game.Prisoners);
+        game.SelectMove();
+    }
     private static IEnumerator Checks()
     {
         game.RestartGame(); yield return null;
+        int cells = 0;
+        for (int row = 0; row < GridManager.RowCount; row++)
+        {
+            Require(game.Grid.GetRowLength(row) == row + 3, "Row length incorrect");
+            for (int x = 0; x < game.Grid.GetRowLength(row); x++) cells++;
+            Require(game.Grid.IsExitCell(new Vector2Int(row + 2, row)), "Row exit incorrect");
+        }
+        Require(cells == 25 && game.Grid.FenceCount == 5, "Board/fence count incorrect");
+        Vector2Int[] initial = { new(0, 1), new(0, 2), new(2, 2), new(4, 3), new(2, 4) };
+        foreach (Vector2Int cell in initial) Require(game.Grid.HasFence(cell), "Initial fence missing");
+        Require(game.Grid.BoundaryOf(new Vector2Int(0, 1), CellEdge.South).Equals(game.Grid.BoundaryOf(new Vector2Int(0, 2), CellEdge.North)), "Shared boundary key incorrect");
+        Require(!game.Grid.PlaceFence(game.Grid.BoundaryOf(new Vector2Int(0, 1), CellEdge.South)), "Opposite-side duplicate fence accepted");
+        Require(game.Grid.IsProtected(new Vector2Int(1, 4)) && game.Grid.IsProtected(new Vector2Int(3, 4)), "Downstream protection failed");
+        Require(!game.Grid.IsProtected(Vector2Int.zero) && !game.Grid.IsProtected(new Vector2Int(2, 0)), "Fence incorrectly protected upstream cells");
+        FenceBoundary vertical = game.Grid.BoundaryOf(new Vector2Int(1, 0), CellEdge.West);
+        Require(game.Grid.PlaceFence(vertical) && !game.Grid.IsProtected(new Vector2Int(1, 0)), "Vertical boundary incorrectly blocked downward sight");
+        game.Grid.RemoveFence(vertical);
+        Require(!game.Grid.CanMove(Vector2Int.zero, new Vector2Int(0, 1)) && game.Grid.CanMove(Vector2Int.zero, new Vector2Int(1, 1)), "Offset adjacency incorrect");
+        game.RestartGame();
+        Require(game.OnBoardCount(0) == 0 && game.ReserveCount(0) == 3 && game.MustPlacePrisoner, "Reserve setup failed");
+        game.SelectPlaceFence(); game.SelectMove(); game.SelectRemoveFence();
+        Require(game.Action == PlayerAction.PlacePrisoner, "Mandatory deployment allowed another action");
+        game.OnCellClicked(new Vector2Int(-1, 0));
+        Require(game.State == GameState.Player1Turn && game.ReserveCount(0) == 3, "Invalid deployment consumed turn");
+        game.OnCellClicked(new Vector2Int(4, 3));
+        Require(game.State == GameState.Handoff && game.OnBoardCount(0) == 1 && game.ReserveCount(0) == 2 && P(0).Cell == new Vector2Int(4, 3), "Free deployment failed");
+        game.ConfirmHandoff();
+        Require(game.MustPlacePrisoner && game.State != GameState.Result, "Reserve pieces ignored in result check");
+        game.RestartGame(); P(0).Deploy(Vector2Int.zero); game.SelectPlaceFence();
+        Require(game.Action == PlayerAction.PlaceFence && !game.MustPlacePrisoner, "Fence choice with deployed piece failed");
+        game.SelectPlacePrisoner(); game.OnPrisonerClicked(P(0));
+        Require(game.OnBoardCount(0) == 2 && game.ReserveCount(0) == 1 && game.State == GameState.Handoff, "Additional deployment on occupied cell failed");
+        RestartWithDeployedPieces();
+        game.SelectPlaceFence();
+        GridCell tile = game.GetComponentsInChildren<GridCell>().First(c => c.Cell == Vector2Int.zero);
+        var edgeClick = new PointerEventData(EventSystem.current);
+        edgeClick.pointerCurrentRaycast = new RaycastResult { worldPosition = game.Grid.WorldPosition(Vector2Int.zero) + Vector3.right * .65f };
+        ExecuteEvents.Execute(tile.gameObject, edgeClick, ExecuteEvents.pointerClickHandler);
+        FenceBoundary east = game.Grid.BoundaryOf(Vector2Int.zero, CellEdge.East);
+        Require(game.Grid.HasFence(east) && game.State == GameState.Handoff, "Pointer edge placement failed");
+        game.ConfirmHandoff(); game.SelectRemoveFence();
+        tile = game.GetComponentsInChildren<GridCell>().First(c => c.Cell == new Vector2Int(1, 0));
+        edgeClick.pointerCurrentRaycast = new RaycastResult { worldPosition = game.Grid.WorldPosition(tile.Cell) + Vector3.left * .65f };
+        ExecuteEvents.Execute(tile.gameObject, edgeClick, ExecuteEvents.pointerClickHandler);
+        Require(!game.Grid.HasFence(east) && game.State == GameState.Handoff, "Opposite edge pointer removal failed");
+        RestartWithDeployedPieces(); yield return null;
         Require(game.Prisoners.Count == 9 && game.State == GameState.Player1Turn, "Setup failed");
         for (int i = 0; i < 9; i++) Require(P(i).Cell == new Vector2Int(0, i / 3), "Initial cell incorrect");
         ExecuteEvents.Execute(P(0).gameObject, new PointerEventData(EventSystem.current), ExecuteEvents.pointerClickHandler);
         game.OnCellClicked(new Vector2Int(2, 0));
         Require(P(0).Cell == Vector2Int.zero && game.State == GameState.Player1Turn, "Invalid move consumed turn");
         game.OnCellClicked(new Vector2Int(0, 1));
-        Require(P(0).Cell == new Vector2Int(0, 1) && game.State == GameState.Handoff, "Vertical move failed");
+        Require(game.State == GameState.Player1Turn, "Diagonal step consumed turn");
+        game.OnCellClicked(new Vector2Int(1, 1));
+        Require(P(0).Cell == new Vector2Int(1, 1) && game.State == GameState.Handoff, "Vertical move failed");
         game.SelectPlaceFence(); game.OnCellClicked(new Vector2Int(4, 3));
         Require(!game.Grid.HasFence(new Vector2Int(4, 3)), "Handoff allowed board input");
         game.ConfirmHandoff(); Require(game.State == GameState.Player2Turn, "Handoff failed");
 
-        game.RestartGame();
+        RestartWithDeployedPieces();
         game.SelectPlaceFence(); game.OnPrisonerClicked(P(0));
         Require(game.Grid.HasFence(Vector2Int.zero) && game.State == GameState.Handoff, "Fence on occupied cell failed");
         game.ConfirmHandoff(); game.SelectPlaceFence(); game.OnCellClicked(Vector2Int.zero);
@@ -79,13 +137,13 @@ public static class DaidatsugokuPrototypeChecks
         game.SelectRemoveFence(); game.OnCellClicked(Vector2Int.zero);
         Require(!game.Grid.HasFence(Vector2Int.zero) && game.State == GameState.Handoff, "Fence removal failed");
 
-        game.RestartGame();
+        RestartWithDeployedPieces();
         P(0).MoveTo(new Vector2Int(1, 0)); game.Grid.PlaceFence(Vector2Int.zero);
         int captures = game.Guard.Resolve(game.Guard.DrawCard(), game.Grid, game.Prisoners);
         Require(captures == 7 && P(0).Captured && P(1).IsOnBoard && P(2).IsOnBoard, "Same-cell protection/capture failed");
         for (int i = 0; i < 20; i++) game.Guard.DrawCard();
 
-        game.RestartGame();
+        RestartWithDeployedPieces();
         for (int player = 0; player < 3; player++)
         {
             game.OnPrisonerClicked(P(player * 3)); game.MoveRightOrEscape();
@@ -97,16 +155,16 @@ public static class DaidatsugokuPrototypeChecks
         game.OnCellClicked(Vector2Int.zero); game.ConfirmHandoff();
         Require(game.State == GameState.Result, "Result accepted input");
 
-        game.RestartGame();
+        RestartWithDeployedPieces();
         // Fixture: shelter the entire winning route and the stationary P2/P3 prisoners.
-        for (int x = 0; x < 5; x++) game.Grid.PlaceFence(new Vector2Int(x, 0));
+        for (int x = 0; x < game.Grid.GetRowLength(0); x++) game.Grid.PlaceFence(new Vector2Int(x, 0));
         game.Grid.PlaceFence(new Vector2Int(0, 1)); game.Grid.PlaceFence(new Vector2Int(0, 2));
         for (int piece = 0; piece < 3; piece++)
-        for (int step = 0; step < 5; step++)
+        for (int step = 0; step < game.Grid.GetRowLength(0); step++)
         {
             Require(game.State == GameState.Player1Turn, "Expected P1 turn");
             game.OnPrisonerClicked(P(piece)); game.MoveRightOrEscape();
-            if (piece == 2 && step == 4) break;
+            if (piece == 2 && step == game.Grid.GetRowLength(0) - 1) break;
             game.ConfirmHandoff(); ToggleSpareFence(); game.ConfirmHandoff(); ToggleSpareFence();
             deadline = EditorApplication.timeSinceStartup + 5;
             while (game.State == GameState.GuardTurn && EditorApplication.timeSinceStartup < deadline) yield return null;
@@ -114,7 +172,7 @@ public static class DaidatsugokuPrototypeChecks
         }
         Require(game.State == GameState.Result && game.EscapedCount(0) == 3 && game.ResultMessage.Contains("P1"), "Three-prisoner victory failed");
         game.RestartGame(); yield return null;
-        Require(game.State == GameState.Player1Turn && game.Grid.FenceCount == 0 && game.EscapedCount(0) == 0 && game.Prisoners.All(p => p.IsOnBoard), "Retry did not reset game");
+        Require(game.State == GameState.Player1Turn && game.Grid.FenceCount == 5 && game.EscapedCount(0) == 0 && game.Prisoners.All(p => p.IsInReserve && !p.IsOnBoard), "Retry did not reset game");
         Require(game.GetComponentsInChildren<Prisoner>(true).Length == 9, "Retry leaked prisoners");
     }
 }

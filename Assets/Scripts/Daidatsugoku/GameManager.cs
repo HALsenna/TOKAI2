@@ -153,7 +153,7 @@ namespace Daidatsugoku
             PatrolCard card = Guard.DrawCard(); Say($"見回りカード：{Guard.GetCardName(card)}");
             yield return new WaitForSecondsRealtime(guardRevealSeconds);
             int count = Guard.Resolve(card, Grid, prisoners); Grid.RefreshPiecePositions(prisoners);
-            Say($"監視完了：{count}人を捕獲。柵より下の同じ縦筋は保護されます。");
+            Say(card == PatrolCard.LookAway ? "監視官は見ていません。捕獲はありません。" : $"監視完了：{count}人を捕獲。柵より下の同じ縦筋は保護されます。");
             if (CheckResult()) yield break;
             yield return new WaitForSecondsRealtime(guardRevealSeconds);
             Round++; RequestHandoff(0);

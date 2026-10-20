@@ -139,9 +139,21 @@ public static class DaidatsugokuPrototypeChecks
 
         RestartWithDeployedPieces();
         P(0).MoveTo(new Vector2Int(1, 0)); game.Grid.PlaceFence(Vector2Int.zero);
-        int captures = game.Guard.Resolve(game.Guard.DrawCard(), game.Grid, game.Prisoners);
+        Require(game.Guard.Resolve(PatrolCard.LookAway, game.Grid, game.Prisoners) == 0 && game.Prisoners.All(p => p.IsOnBoard), "Look-away captured prisoners");
+        int captures = game.Guard.Resolve(PatrolCard.WatchAllCells, game.Grid, game.Prisoners);
         Require(captures == 7 && P(0).Captured && P(1).IsOnBoard && P(2).IsOnBoard, "Same-cell protection/capture failed");
-        for (int i = 0; i < 20; i++) game.Guard.DrawCard();
+        game.Guard.ResetDeck();
+        for (int batch = 0; batch < 3; batch++)
+        {
+            int watching = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                PatrolCard card = game.Guard.DrawCard();
+                Require(card == PatrolCard.WatchAllCells || card == PatrolCard.LookAway, "Unknown patrol card");
+                if (card == PatrolCard.WatchAllCells) watching++;
+            }
+            Require(watching == 4, "Patrol deck/refill must contain both states equally");
+        }
 
         RestartWithDeployedPieces();
         for (int player = 0; player < 3; player++)
@@ -151,6 +163,13 @@ public static class DaidatsugokuPrototypeChecks
         }
         double deadline = EditorApplication.timeSinceStartup + 5;
         while (game.State == GameState.GuardTurn && EditorApplication.timeSinceStartup < deadline) yield return null;
+        if (game.State == GameState.Handoff)
+        {
+            Require(game.Prisoners.All(p => p.IsOnBoard) && game.Round == 2 && game.Message.Contains("見ていません"), "Automatic look-away failed");
+            // Verify the capture/result path independently of the shuffled first card.
+            game.Guard.Resolve(PatrolCard.WatchAllCells, game.Grid, game.Prisoners);
+            typeof(GameManager).GetMethod("CheckResult", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Invoke(game, null);
+        }
         Require(game.State == GameState.Result && game.Prisoners.All(p => p.Captured), "Automatic guard/draw failed");
         game.OnCellClicked(Vector2Int.zero); game.ConfirmHandoff();
         Require(game.State == GameState.Result, "Result accepted input");

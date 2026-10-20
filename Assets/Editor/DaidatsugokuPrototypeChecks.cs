@@ -95,13 +95,24 @@ public static class DaidatsugokuPrototypeChecks
         game.OnCellClicked(new Vector2Int(-1, 0));
         Require(game.State == GameState.Player1Turn && game.ReserveCount(0) == 3, "Invalid deployment consumed turn");
         game.OnCellClicked(new Vector2Int(4, 3));
-        Require(game.State == GameState.Handoff && game.OnBoardCount(0) == 1 && game.ReserveCount(0) == 2 && P(0).Cell == new Vector2Int(4, 3), "Free deployment failed");
+        Require(game.State == GameState.Player1Turn && game.OnBoardCount(0) == 0 && game.ReserveCount(0) == 3, "Non-start deployment consumed turn or reserve");
+        for (int row = 0; row < GridManager.RowCount; row++)
+        {
+            game.RestartGame();
+            Vector2Int start = new(0, row);
+            Require(game.Grid.IsStartCell(start) && !game.Grid.IsStartCell(new Vector2Int(1, row)), "Start cell classification failed");
+            game.OnCellClicked(start);
+            Require(game.State == GameState.Handoff && game.OnBoardCount(0) == 1 && game.ReserveCount(0) == 2 && P(0).Cell == start, "Start deployment failed");
+        }
         game.ConfirmHandoff();
         Require(game.MustPlacePrisoner && game.State != GameState.Result, "Reserve pieces ignored in result check");
         game.RestartGame(); P(0).Deploy(Vector2Int.zero); game.SelectPlaceFence();
         Require(game.Action == PlayerAction.PlaceFence && !game.MustPlacePrisoner, "Fence choice with deployed piece failed");
         game.SelectPlacePrisoner(); game.OnPrisonerClicked(P(0));
         Require(game.OnBoardCount(0) == 2 && game.ReserveCount(0) == 1 && game.State == GameState.Handoff, "Additional deployment on occupied cell failed");
+        game.RestartGame(); P(0).Deploy(new Vector2Int(1, 0)); game.SelectPlacePrisoner();
+        game.OnPrisonerClicked(P(0));
+        Require(game.State == GameState.Player1Turn && game.OnBoardCount(0) == 1 && game.ReserveCount(0) == 2, "Occupied non-start cell accepted deployment");
         RestartWithDeployedPieces();
         game.SelectPlaceFence();
         GridCell tile = game.GetComponentsInChildren<GridCell>().First(c => c.Cell == Vector2Int.zero);

@@ -21,6 +21,7 @@ namespace Daidatsugoku
 
         public int GetRowLength(int row) => row >= 0 && row < RowCount ? RowLengths[row] : 0;
         public bool IsInside(Vector2Int c) => c.x >= 0 && c.x < GetRowLength(c.y);
+        public bool IsStartCell(Vector2Int c) => IsInside(c) && c.x == 0;
         public bool IsExitCell(Vector2Int c) => IsInside(c) && c.x == GetRowLength(c.y) - 1;
         public int GlobalColumn(Vector2Int c) => c.x + RowOffsets[c.y];
         public bool CanMove(Vector2Int from, Vector2Int to)
@@ -98,7 +99,7 @@ namespace Daidatsugoku
                 GameObject tile = Primitive(PrimitiveType.Cube, CellName(cell), WorldPosition(cell), new Vector3(1.45f, .15f, 1.45f), color);
                 tile.AddComponent<GridCell>().Initialize(game, cell);
                 Label(CellName(cell), WorldPosition(cell) + new Vector3(-.5f, .09f, -.5f));
-                if (x == 0) Label("START", WorldPosition(cell) + new Vector3(0, .09f, .15f));
+                if (IsStartCell(cell)) Label("START", WorldPosition(cell) + new Vector3(0, .09f, .15f));
             }
             for (int row = 0; row < RowCount; row++)
             {

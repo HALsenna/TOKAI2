@@ -78,7 +78,7 @@ namespace Daidatsugoku
             if (action == PlayerAction.PlacePrisoner && ReserveCount(CurrentPlayer) == 0) { Say("未配置の駒がありません。"); return; }
             ClearSelection(); Action = action;
             Say(action switch {
-                PlayerAction.PlacePrisoner => "駒を配置するマスをクリックしてください。",
+                PlayerAction.PlacePrisoner => "駒を配置するスタートマス（START）をクリックしてください。",
                 PlayerAction.Move => "自分の駒を選択してください。",
                 PlayerAction.PlaceFence => "柵を設置するマスの辺をクリックしてください。",
                 _ => "破壊する赤い柵をクリックしてください。"
@@ -106,6 +106,7 @@ namespace Daidatsugoku
             if (MustPlacePrisoner && Action != PlayerAction.PlacePrisoner) return;
             if (Action == PlayerAction.PlacePrisoner)
             {
+                if (!Grid.IsStartCell(cell)) { Say("駒を配置できるのはスタートマス（START）だけです。"); return; }
                 foreach (Prisoner prisoner in prisoners)
                 {
                     if (prisoner.Owner != CurrentPlayer || !prisoner.IsInReserve) continue;

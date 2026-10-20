@@ -30,7 +30,9 @@ namespace Daidatsugoku
             canvasObject.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
             CanvasScaler scaler = canvasObject.GetComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1280, 800); scaler.matchWidthOrHeight = 1f;
+            scaler.referenceResolution = new Vector2(1280, 800);
+            // Fit the whole reference layout on both axes, including 4:3 windows.
+            scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.Expand;
 
             Camera camera = Camera.main;
             if (camera != null)

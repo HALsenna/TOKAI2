@@ -14,6 +14,10 @@ namespace Daidatsugoku
         private Text turn, score, message, mode, handoffText, resultText;
         private GameObject actions, handoff, result;
         private Button deploy, move, place, remove, forward;
+        private bool showHand;
+        private int handPage;
+        private int lastInputPlayer = -1;
+        private int viewedPlayer;
 
         public void Initialize(GameManager manager)
         {
@@ -31,16 +35,23 @@ namespace Daidatsugoku
             Label("大脱獄", sidebar, 20, 20, 320, 50, 34);
             turn = Label("", sidebar, 20, 85, 320, 55, 24);
             score = Label("", sidebar, 20, 145, 320, 110, 21);
+            score.raycastTarget = true;
+            score.gameObject.AddComponent<Button>().onClick.AddListener(() => {
+                if (!game.IsPlayerTurn || game.IsChainOpen || game.OverflowPlayer >= 0) return;
+                viewedPlayer = (viewedPlayer + 1) % game.PlayerCount; showHand = true; handPage = 0; Refresh();
+            });
             mode = Label("", sidebar, 20, 260, 320, 38, 21);
+            mode.raycastTarget = true;
+            mode.gameObject.AddComponent<Button>().onClick.AddListener(() => { showHand = !showHand; handPage = 0; Refresh(); });
             actions = new GameObject("ActionPanel", typeof(RectTransform));
             actions.transform.SetParent(sidebar, false); Stretch(actions.GetComponent<RectTransform>());
-            deploy = Button("駒を配置", actions.transform, 20, 300, 320, game.SelectPlacePrisoner);
-            move = Button("移動", actions.transform, 20, 355, 320, game.SelectMove);
-            place = Button("柵を設置", actions.transform, 20, 410, 320, game.SelectPlaceFence);
-            remove = Button("柵を破壊", actions.transform, 20, 465, 320, game.SelectRemoveFence);
-            forward = Button("右へ／脱獄 →", actions.transform, 20, 520, 320, game.MoveRightOrEscape);
+            deploy = Button("駒を配置", actions.transform, 20, 300, 320, () => ClickSlot(0));
+            move = Button("移動", actions.transform, 20, 355, 320, () => ClickSlot(1));
+            place = Button("柵を設置", actions.transform, 20, 410, 320, () => ClickSlot(2));
+            remove = Button("柵を破壊", actions.transform, 20, 465, 320, () => ClickSlot(3));
+            forward = Button("右へ／脱獄 →", actions.transform, 20, 520, 320, () => ClickSlot(4));
             message = Label("", sidebar, 20, 580, 320, 105, 20);
-            Label("操作：左クリックのみ\n柵は辺をクリックして設置\n柵より下の同じ縦筋を保護", sidebar, 20, 695, 320, 85, 17);
+            Label("操作：左クリックのみ\n手札：見出し／スコアで切替\n柵より下の同じ縦筋を保護", sidebar, 20, 695, 320, 85, 17);
 
             handoff = Panel("HandoffPanel", canvasObject.transform, new Color(.03f, .05f, .09f, .96f)).gameObject;
             RectTransform handoffCard = CenterCard(handoff.transform);
@@ -72,18 +83,78 @@ namespace Daidatsugoku
                 _ => $"ラウンド {game.Round}：P{game.CurrentPlayer + 1}"
             };
             score.text = "";
-            for (int p = 0; p < 3; p++) score.text += $"P{p + 1}　脱獄 {game.EscapedCount(p)}/3　盤上 {game.OnBoardCount(p)} 手元 {game.ReserveCount(p)}\n";
+            score.fontSize = game.PlayerCount == 4 ? 18 : 21;
+            for (int p = 0; p < game.PlayerCount; p++) score.text += $"P{p + 1}　脱獄 {game.EscapedCount(p)}/3　盤上 {game.OnBoardCount(p)} 手元 {game.ReserveCount(p)}\n";
             message.text = game.Message;
             mode.text = "選択中：" + (game.Action switch { PlayerAction.PlacePrisoner => "駒を配置", PlayerAction.Move => "移動", PlayerAction.PlaceFence => "柵を設置", _ => "柵を破壊" });
-            actions.SetActive(game.IsPlayerTurn);
-            deploy.interactable = game.IsPlayerTurn && game.ReserveCount(game.CurrentPlayer) > 0;
-            bool canAct = game.IsPlayerTurn && !game.MustPlacePrisoner;
-            move.interactable = canAct && game.OnBoardCount(game.CurrentPlayer) > 0; place.interactable = canAct;
-            remove.interactable = canAct; forward.interactable = canAct && game.Action == PlayerAction.Move;
+            actions.SetActive(game.IsPlayerTurn || game.IsChainOpen || game.OverflowPlayer >= 0);
+            if (lastInputPlayer != game.InputPlayer || game.State == GameState.Handoff || game.State == GameState.Result)
+            { showHand = false; handPage = 0; lastInputPlayer = viewedPlayer = game.InputPlayer; }
+            RefreshSlots();
             handoff.SetActive(game.State == GameState.Handoff);
             handoffText.text = $"次のプレイヤー P{game.PendingPlayer + 1} へ\n交代してください。\n準備ができたら開始ボタンを押します。";
             result.SetActive(game.State == GameState.Result);
             resultText.text = game.ResultMessage;
+        }
+
+        private bool HandVisible => showHand || game.IsChainOpen || game.OverflowPlayer >= 0;
+        private int HandPlayer => game.IsChainOpen || game.OverflowPlayer >= 0 ? game.InputPlayer : viewedPlayer;
+        private void RefreshSlots()
+        {
+            Button[] slots = { deploy, move, place, remove, forward };
+            if (HandVisible)
+            {
+                int player = HandPlayer;
+                var hand = game.Hand(player);
+                // Four card slots plus one navigation/response slot; layout and styling stay unchanged.
+                if (handPage * 4 >= hand.Count) handPage = 0;
+                mode.text = $"P{player + 1} 手札 {hand.Count}/5：" + (game.OverflowPlayer >= 0 ? "捨てる" : "使用／戻る");
+                for (int i = 0; i < 4; i++)
+                {
+                    int index = handPage * 4 + i;
+                    SetSlot(slots[i], index < hand.Count ? hand[index].DisplayName : "―", index < hand.Count && (game.OverflowPlayer >= 0 || game.CanUseCard(player, index)));
+                }
+                if (hand.Count > 4 && handPage == 0) SetSlot(forward, "次の手札 →", true);
+                else if (game.IsChainOpen) SetSlot(forward, "対応をパス", true);
+                else if (game.OverflowPlayer >= 0) SetSlot(forward, "← 最初の手札", handPage > 0);
+                else SetSlot(forward, game.CanEndTurn && player == game.CurrentPlayer ? "ターン終了" : "通常行動に戻る", true);
+                return;
+            }
+            SetSlot(deploy, "駒を配置", game.CanOperate && game.CanPerform(PlayerAction.PlacePrisoner));
+            SetSlot(move, "移動", game.CanOperate && game.CanPerform(PlayerAction.Move));
+            SetSlot(place, "柵を設置", game.CanOperate && game.CanPerform(PlayerAction.PlaceFence));
+            SetSlot(remove, "柵を破壊", game.CanOperate && game.CanPerform(PlayerAction.RemoveFence));
+            SetSlot(forward, game.CanEndTurn ? (game.ActionConsumed ? "ターン終了" : "パス") : "右へ／脱獄 →",
+                game.CanEndTurn || (game.CanOperate && game.Action == PlayerAction.Move));
+        }
+        private static void SetSlot(Button button, string text, bool enabled)
+        {
+            button.GetComponentInChildren<Text>().text = text; button.interactable = enabled;
+        }
+        private void ClickSlot(int slot)
+        {
+            if (HandVisible)
+            {
+                if (slot < 4)
+                {
+                    int player = HandPlayer, index = handPage * 4 + slot;
+                    if (game.OverflowPlayer >= 0) game.DiscardOverflow(player, index); else game.UseCard(player, index);
+                }
+                else if (game.Hand(HandPlayer).Count > 4 && handPage == 0) { handPage = 1; Refresh(); }
+                else if (game.IsChainOpen) game.PassChain(game.Responder);
+                else if (game.OverflowPlayer >= 0) { handPage = 0; Refresh(); }
+                else if (game.CanEndTurn && HandPlayer == game.CurrentPlayer) game.EndTurn();
+                else { showHand = false; handPage = 0; Refresh(); }
+                return;
+            }
+            switch (slot)
+            {
+                case 0: game.SelectPlacePrisoner(); break;
+                case 1: game.SelectMove(); break;
+                case 2: game.SelectPlaceFence(); break;
+                case 3: game.SelectRemoveFence(); break;
+                case 4: if (game.CanEndTurn) game.EndTurn(); else game.MoveRightOrEscape(); break;
+            }
         }
 
         private RectTransform Panel(string title, Transform parent, Color color)

@@ -54,6 +54,7 @@ namespace Daidatsugoku
         private Prisoner selected;
         private FlowContext context;
         private System.Action continuation;
+        private System.Action pendingCompletion;
         private bool resolving;
         private static readonly Color[] Colors = { new(.95f, .25f, .25f), new(.25f, .55f, 1f), new(1f, .85f, .2f), new(.65f, .35f, .95f) };
 
@@ -77,7 +78,7 @@ namespace Daidatsugoku
         {
             StopAllCoroutines(); ClearSelection(); State = GameState.Setup; Round = 1; Winner = -1;
             ResultMessage = ""; prisoners.Clear(); Array.Clear(escaped, 0, escaped.Length);
-            context = null; continuation = null; chain.Clear(); resolving = false;
+            context = null; continuation = pendingCompletion = null; chain.Clear(); resolving = false;
             Responder = OverflowPlayer = -1; ConsecutivePasses = 0;
             activePlayerCount = Mathf.Clamp(playerCount, 2, 4);
             turnOrder.Clear(); foreach (var hand in hands) hand.Clear();
@@ -127,6 +128,11 @@ namespace Daidatsugoku
         {
             if (State == GameState.Result || player != OverflowPlayer || index < 0 || index >= hands[player].Count) return false;
             Cards.DiscardCard(hands[player][index]); hands[player].RemoveAt(index); RefreshOverflow();
+            if (OverflowPlayer < 0 && pendingCompletion != null)
+            {
+                System.Action complete = pendingCompletion; pendingCompletion = null;
+                complete();
+            }
             UpdateAvailability(); return true;
         }
         public bool Occupied(Vector2Int cell)
@@ -348,6 +354,12 @@ namespace Daidatsugoku
             System.Action after = continuation; continuation = null;
             if (CheckResult()) return;
             RefreshOverflow(); Phase = ActionConsumed ? TurnPhase.ActionCompleted : TurnPhase.ActionWait;
+            if (OverflowPlayer >= 0)
+            {
+                // Finish the declared event only after all required discards, exactly once.
+                pendingCompletion = after;
+                UpdateAvailability(); return;
+            }
             after?.Invoke();
             if (State != GameState.Result) UpdateAvailability();
         }
@@ -376,12 +388,19 @@ namespace Daidatsugoku
         private IEnumerator GuardTurnRoutine()
         {
             PatrolCard card = Guard.DrawCard(); Say($"見回りカード：{Guard.GetCardName(card)}");
-            yield return new WaitForSecondsRealtime(guardRevealSeconds);
-            // Provisional ordering until the dedicated simultaneous-event specification exists.
+            var affected = new List<(int owner, List<Prisoner> targets)>();
             foreach (int owner in turnOrder)
             {
                 List<Prisoner> targets = Guard.Targets(card, Grid, prisoners, owner);
-                if (targets.Count == 0) continue;
+                if (targets.Count > 0) affected.Add((owner, targets));
+            }
+            yield return new WaitForSecondsRealtime(guardRevealSeconds);
+            if (State == GameState.Result) yield break;
+            // Provisional ordering until the dedicated simultaneous-event specification exists.
+            foreach (var entry in affected)
+            {
+                int owner = entry.owner;
+                List<Prisoner> targets = entry.targets;
                 FlowContext trigger = new(FlowEvent.GuardCapture, owner, owner, captureTargets: targets.AsReadOnly());
                 OpenWindow(trigger, () => {
                     if (!trigger.Cancelled)

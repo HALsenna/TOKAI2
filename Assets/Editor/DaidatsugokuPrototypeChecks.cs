@@ -235,6 +235,31 @@ public static class DaidatsugokuPrototypeChecks
         Require(game.ActionConsumed && game.Grid.FenceCount == fenceCount, "Normal-action chain resolved out of order");
 
         // Dedicated rule hooks reject prohibited/protected targets without consuming the action.
+        Restart(); a = game.CurrentPlayer; b = game.TurnOrder[1];
+        for (int i = 0; i < 5; i++) Give(a, normal);
+        var drawOnResponse = Card("draw-on-response", (g, p, c) => c.Event == FlowEvent.NormalAction,
+            (g, p, c) => { g.Cards.Reset(new[] { normal }); g.DrawSkillCard(a); });
+        Give(b, drawOnResponse); fenceCount = game.Grid.FenceCount;
+        game.SelectRemoveFence(); game.OnCellClicked(new Vector2Int(0, 1));
+        game.UseCard(b, 0); game.PassChain(a); game.PassChain(b);
+        Require(game.OverflowPlayer == a && game.Grid.FenceCount == fenceCount && !game.CanEndTurn,
+            "Root action continued before required discard");
+        Require(game.DiscardOverflow(a, 5) && game.Grid.FenceCount == fenceCount - 1 && game.CanEndTurn,
+            "Root action did not resume after discarding newly drawn card");
+        Require(!game.DiscardOverflow(a, 0) && game.Grid.FenceCount == fenceCount - 1,
+            "Root action resumed more than once");
+
+        // Restart must cancel a suspended declaration.
+        Restart(); a = game.CurrentPlayer; b = game.TurnOrder[1];
+        for (int i = 0; i < 5; i++) Give(a, normal);
+        Give(b, drawOnResponse);
+        game.SelectRemoveFence(); game.OnCellClicked(new Vector2Int(0, 1));
+        game.UseCard(b, 0); game.PassChain(a); game.PassChain(b);
+        Require(game.OverflowPlayer == a, "Suspended restart fixture did not overflow");
+        Restart(); Require(game.Grid.FenceCount == 5 && game.OverflowPlayer == -1 && !game.ActionConsumed,
+            "Restart retained a pending declaration");
+
+        // Dedicated rule hooks reject prohibited/protected targets without consuming the action.
         var protectedRules = Fixture<FlowCheckRules>(); protectedRules.ProtectFences = true;
         Restart(3, protectedRules);
         Require(!game.CanPerform(PlayerAction.RemoveFence), "Protected fences counted as removable");
@@ -245,7 +270,10 @@ public static class DaidatsugokuPrototypeChecks
         Restart(); a = game.TurnOrder[0]; b = game.TurnOrder[1];
         own = game.Prisoners.First(p => p.Owner == a); other = game.Prisoners.First(p => p.Owner == b);
         own.Deploy(Vector2Int.zero); other.Deploy(new Vector2Int(2, 0));
-        var save = Card("save", (g, p, c) => c.Event == FlowEvent.GuardCapture && c.Target == p, (g, p, c) => c.Cancelled = true);
+        var sheltered = game.Prisoners.First(p => p.Owner == b && p != other);
+        sheltered.Deploy(new Vector2Int(1, 4));
+        var save = Card("save", (g, p, c) => c.Event == FlowEvent.GuardCapture && c.Target == p,
+            (g, p, c) => { c.Cancelled = true; sheltered.MoveTo(new Vector2Int(3, 0)); });
         Give(a, save); Give(b, save);
         Require(game.Guard.Targets(PatrolCard.NotWatching, game.Grid, game.Prisoners, a).Count == 0, "Not-watching targeted prisoners");
         for (int i = 0; i < 3; i++) { FenceAction(); game.EndTurn(); if (i < 2) game.ConfirmHandoff(); }
@@ -260,6 +288,7 @@ public static class DaidatsugokuPrototypeChecks
         guardDeadline = EditorApplication.timeSinceStartup + 5;
         while (game.State == GameState.GuardTurn && EditorApplication.timeSinceStartup < guardDeadline) yield return null;
         Require(other.Captured && own.IsOnBoard && game.Round == 2, "Guard finalization/next round incorrect");
+        Require(sheltered.IsOnBoard, "Guard added targets after rescue responses began");
 
         Restart();
         GuardDeck.SetValue(game.Guard, new List<PatrolCard> { PatrolCard.NotWatching }); game.Guard.ResetDeck();

@@ -82,6 +82,7 @@ namespace Daidatsugoku
                 GameState.Result => "ゲーム終了",
                 _ => $"ラウンド {game.Round}：P{game.CurrentPlayer + 1}"
             };
+            if (game.IsPlayerTurn) turn.text += game.ActionConsumed ? "\n通常行動：消費済み" : "\n通常行動：未消費";
             score.text = "";
             score.fontSize = game.PlayerCount == 4 ? 18 : 21;
             for (int p = 0; p < game.PlayerCount; p++) score.text += $"P{p + 1}　脱獄 {game.EscapedCount(p)}/3　盤上 {game.OnBoardCount(p)} 手元 {game.ReserveCount(p)}\n";

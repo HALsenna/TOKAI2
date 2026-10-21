@@ -17,6 +17,7 @@ namespace Daidatsugoku
         private bool showHand;
         private int handPage;
         private int lastInputPlayer = -1;
+        private int viewedPlayer;
 
         public void Initialize(GameManager manager)
         {
@@ -34,6 +35,11 @@ namespace Daidatsugoku
             Label("大脱獄", sidebar, 20, 20, 320, 50, 34);
             turn = Label("", sidebar, 20, 85, 320, 55, 24);
             score = Label("", sidebar, 20, 145, 320, 110, 21);
+            score.raycastTarget = true;
+            score.gameObject.AddComponent<Button>().onClick.AddListener(() => {
+                if (!game.IsPlayerTurn || game.IsChainOpen || game.OverflowPlayer >= 0) return;
+                viewedPlayer = (viewedPlayer + 1) % game.PlayerCount; showHand = true; handPage = 0; Refresh();
+            });
             mode = Label("", sidebar, 20, 260, 320, 38, 21);
             mode.raycastTarget = true;
             mode.gameObject.AddComponent<Button>().onClick.AddListener(() => { showHand = !showHand; handPage = 0; Refresh(); });
@@ -45,7 +51,7 @@ namespace Daidatsugoku
             remove = Button("柵を破壊", actions.transform, 20, 465, 320, () => ClickSlot(3));
             forward = Button("右へ／脱獄 →", actions.transform, 20, 520, 320, () => ClickSlot(4));
             message = Label("", sidebar, 20, 580, 320, 105, 20);
-            Label("操作：左クリックのみ\n「選択中」を押すと手札\n柵より下の同じ縦筋を保護", sidebar, 20, 695, 320, 85, 17);
+            Label("操作：左クリックのみ\n手札：見出し／スコアで切替\n柵より下の同じ縦筋を保護", sidebar, 20, 695, 320, 85, 17);
 
             handoff = Panel("HandoffPanel", canvasObject.transform, new Color(.03f, .05f, .09f, .96f)).gameObject;
             RectTransform handoffCard = CenterCard(handoff.transform);
@@ -83,7 +89,7 @@ namespace Daidatsugoku
             mode.text = "選択中：" + (game.Action switch { PlayerAction.PlacePrisoner => "駒を配置", PlayerAction.Move => "移動", PlayerAction.PlaceFence => "柵を設置", _ => "柵を破壊" });
             actions.SetActive(game.IsPlayerTurn || game.IsChainOpen || game.OverflowPlayer >= 0);
             if (lastInputPlayer != game.InputPlayer || game.State == GameState.Handoff || game.State == GameState.Result)
-            { showHand = false; handPage = 0; lastInputPlayer = game.InputPlayer; }
+            { showHand = false; handPage = 0; lastInputPlayer = viewedPlayer = game.InputPlayer; }
             RefreshSlots();
             handoff.SetActive(game.State == GameState.Handoff);
             handoffText.text = $"次のプレイヤー P{game.PendingPlayer + 1} へ\n交代してください。\n準備ができたら開始ボタンを押します。";
@@ -92,12 +98,13 @@ namespace Daidatsugoku
         }
 
         private bool HandVisible => showHand || game.IsChainOpen || game.OverflowPlayer >= 0;
+        private int HandPlayer => game.IsChainOpen || game.OverflowPlayer >= 0 ? game.InputPlayer : viewedPlayer;
         private void RefreshSlots()
         {
             Button[] slots = { deploy, move, place, remove, forward };
             if (HandVisible)
             {
-                int player = game.InputPlayer;
+                int player = HandPlayer;
                 var hand = game.Hand(player);
                 // Four card slots plus one navigation/response slot; layout and styling stay unchanged.
                 if (handPage * 4 >= hand.Count) handPage = 0;
@@ -110,7 +117,7 @@ namespace Daidatsugoku
                 if (hand.Count > 4 && handPage == 0) SetSlot(forward, "次の手札 →", true);
                 else if (game.IsChainOpen) SetSlot(forward, "対応をパス", true);
                 else if (game.OverflowPlayer >= 0) SetSlot(forward, "← 最初の手札", handPage > 0);
-                else SetSlot(forward, game.CanEndTurn ? "ターン終了" : "通常行動に戻る", true);
+                else SetSlot(forward, game.CanEndTurn && player == game.CurrentPlayer ? "ターン終了" : "通常行動に戻る", true);
                 return;
             }
             SetSlot(deploy, "駒を配置", game.CanOperate && game.CanPerform(PlayerAction.PlacePrisoner));
@@ -130,13 +137,13 @@ namespace Daidatsugoku
             {
                 if (slot < 4)
                 {
-                    int player = game.InputPlayer, index = handPage * 4 + slot;
+                    int player = HandPlayer, index = handPage * 4 + slot;
                     if (game.OverflowPlayer >= 0) game.DiscardOverflow(player, index); else game.UseCard(player, index);
                 }
-                else if (game.Hand(game.InputPlayer).Count > 4 && handPage == 0) { handPage = 1; Refresh(); }
+                else if (game.Hand(HandPlayer).Count > 4 && handPage == 0) { handPage = 1; Refresh(); }
                 else if (game.IsChainOpen) game.PassChain(game.Responder);
                 else if (game.OverflowPlayer >= 0) { handPage = 0; Refresh(); }
-                else if (game.CanEndTurn) game.EndTurn();
+                else if (game.CanEndTurn && HandPlayer == game.CurrentPlayer) game.EndTurn();
                 else { showHand = false; handPage = 0; Refresh(); }
                 return;
             }

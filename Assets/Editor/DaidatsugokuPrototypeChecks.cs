@@ -171,6 +171,20 @@ public static class DaidatsugokuPrototypeChecks
         Require(game.UseCard(owner, 0) && !game.ActionConsumed, "Card consumed normal action");
         FenceAction(); Require(game.UseCard(owner, 0) && game.ActionConsumed && game.IsPlayerTurn, "Post-action card unavailable");
 
+        // Other-turn cards can initiate outside a response window without changing the active turn.
+        Restart(); owner = game.CurrentPlayer; int visitor = (owner + 1) % game.PlayerCount;
+        var ownOnly = Card("own-only", (g, p, c) => c.Event == FlowEvent.FreePlay && p == g.CurrentPlayer);
+        var otherOnly = Card("other-only", (g, p, c) => c.Event == FlowEvent.FreePlay && p != g.CurrentPlayer);
+        Give(visitor, ownOnly, otherOnly);
+        Require(!game.CanUseCard(visitor, 0) && game.CanUseCard(visitor, 1), "Other-turn conditions not honored");
+        // The existing score text cycles whose hand is displayed; no extra panel is created.
+        var scoreButton = game.GetComponentsInChildren<Button>(true).Single(button => button.name == "Text" && button.GetComponent<RectTransform>().anchoredPosition.y == -145);
+        scoreButton.onClick.Invoke();
+        Require(game.GetComponentsInChildren<Button>(true).Single(button => button.name == "移動").interactable, "Other-player hand not reachable through HUD");
+        ClickButton("移動");
+        Require(game.Hand(visitor).Count == 1 && game.CurrentPlayer == owner && !game.ActionConsumed && game.IsPlayerTurn,
+            "Other-turn card changed active turn/action or did not play");
+
         // Conditions, automatic and voluntary pass; card effect re-enables mandatory action.
         var rules = Fixture<FlowCheckRules>(); rules.Block = true;
         Restart(3, rules); Require(game.State == GameState.Handoff, "No actions/cards did not auto-pass");

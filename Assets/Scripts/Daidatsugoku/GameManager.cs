@@ -256,7 +256,7 @@ namespace Daidatsugoku
         {
             if (State == GameState.Result || OverflowPlayer >= 0 || resolving || player < 0 || player >= PlayerCount || index < 0 || index >= hands[player].Count) return false;
             if (IsChainOpen) return player == Responder && hands[player][index].CanPlay(this, player, context);
-            return IsPlayerTurn && player == CurrentPlayer && (Phase == TurnPhase.ActionWait || Phase == TurnPhase.ActionCompleted)
+            return IsPlayerTurn && (Phase == TurnPhase.ActionWait || Phase == TurnPhase.ActionCompleted)
                 && hands[player][index].CanPlay(this, player, FreeContext(player));
         }
         public bool HasPlayableCard(int player)

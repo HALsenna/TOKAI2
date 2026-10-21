@@ -5,6 +5,7 @@ namespace Daidatsugoku
 {
     public sealed class GridManager : MonoBehaviour
     {
+        [SerializeField] private Shader boardShader;
         public const int Width = 7, RowCount = 5;
         private static readonly int[] RowLengths = { 3, 4, 5, 6, 7 };
         private static readonly int[] RowOffsets = { 2, 1, 1, 0, 0 };
@@ -76,7 +77,7 @@ namespace Daidatsugoku
         {
             if (!materials.TryGetValue(color, out Material material))
             {
-                Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+                Shader shader = boardShader != null ? boardShader : Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
                 material = new Material(shader) { color = color };
                 materials.Add(color, material);
             }

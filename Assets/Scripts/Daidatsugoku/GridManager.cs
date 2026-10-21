@@ -76,8 +76,8 @@ namespace Daidatsugoku
         {
             if (!materials.TryGetValue(color, out Material material))
             {
-                Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-                material = new Material(shader) { color = color };
+                // A referenced material keeps the runtime-generated board shader in Web builds.
+                material = new Material(Resources.Load<Material>("BoardMaterial")) { color = color };
                 materials.Add(color, material);
             }
             return material;
@@ -129,6 +129,9 @@ namespace Daidatsugoku
             position += boundary.Vertical ? new Vector3(-Spacing / 2, 0, 0) : new Vector3(0, 0, Spacing / 2);
             Vector3 scale = boundary.Vertical ? new Vector3(.12f, .45f, 1.45f) : new Vector3(1.45f, .45f, .12f);
             GameObject fence = Primitive(PrimitiveType.Cube, $"Fence_{boundary}", position, scale, new Color(.95f, .16f, .19f));
+            // Wider touch target without changing the visible fence.
+            BoxCollider hitTarget = fence.GetComponent<BoxCollider>();
+            hitTarget.size = boundary.Vertical ? new Vector3(3f, 1f, 1f) : new Vector3(1f, 1f, 3f);
             fence.AddComponent<FenceClick>().Initialize(game, boundary);
             fences.Add(boundary, fence);
             return true;
@@ -174,7 +177,7 @@ namespace Daidatsugoku
             obj.transform.SetParent(generated, false);
             obj.transform.position = position; obj.transform.rotation = Quaternion.Euler(90, 0, 0);
             TextMesh label = obj.AddComponent<TextMesh>();
-            if (boardFont == null) boardFont = Font.CreateDynamicFontFromOSFont(new[] { "Yu Gothic", "Meiryo", "Arial" }, 40);
+            if (boardFont == null) boardFont = GameFont.Load();
             label.font = boardFont;
             label.GetComponent<MeshRenderer>().sharedMaterial = boardFont.material;
             label.text = text; label.characterSize = .1f; label.fontSize = 40; label.color = Color.white;
@@ -184,7 +187,6 @@ namespace Daidatsugoku
         private void OnDestroy()
         {
             foreach (Material material in materials.Values) if (material != null) Destroy(material);
-            if (boardFont != null) Destroy(boardFont);
         }
     }
 }

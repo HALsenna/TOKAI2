@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
@@ -14,39 +14,48 @@ namespace Daidatsugoku
         private Text turn, score, message, mode, handoffText, resultText;
         private GameObject actions, handoff, result;
         private Button deploy, move, place, remove, forward;
+        private RectTransform safeRoot, sidebar, sidebarContent;
+        private CanvasScaler scaler;
+        private Text title, help;
+        private int layoutWidth, layoutHeight;
+        private Rect lastSafeArea;
 
         public void Initialize(GameManager manager)
         {
             game = manager;
-            font = Font.CreateDynamicFontFromOSFont(new[] { "Yu Gothic", "Meiryo", "Arial" }, 22);
+            font = GameFont.Load();
             GameObject canvasObject = new("DaidatsugokuCanvas", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
             canvasObject.transform.SetParent(transform, false);
             canvasObject.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
-            CanvasScaler scaler = canvasObject.GetComponent<CanvasScaler>();
+            scaler = canvasObject.GetComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1280, 800); scaler.matchWidthOrHeight = 1f;
 
-            RectTransform sidebar = Panel("Sidebar", canvasObject.transform, new Color(.06f, .09f, .14f, .98f));
+            safeRoot = new GameObject("SafeArea", typeof(RectTransform)).GetComponent<RectTransform>();
+            safeRoot.SetParent(canvasObject.transform, false); Stretch(safeRoot);
+            sidebar = Panel("Sidebar", safeRoot, new Color(.06f, .09f, .14f, .98f));
             sidebar.anchorMax = new Vector2(.29f, 1);
-            Label("大脱獄", sidebar, 20, 20, 320, 50, 34);
-            turn = Label("", sidebar, 20, 85, 320, 55, 24);
-            score = Label("", sidebar, 20, 145, 320, 110, 21);
-            mode = Label("", sidebar, 20, 260, 320, 38, 21);
+            sidebarContent = new GameObject("SidebarContent", typeof(RectTransform)).GetComponent<RectTransform>();
+            sidebarContent.SetParent(sidebar, false); Stretch(sidebarContent);
+            title = Label("大脱獄", sidebarContent, 20, 20, 320, 50, 34);
+            turn = Label("", sidebarContent, 20, 85, 320, 55, 24);
+            score = Label("", sidebarContent, 20, 145, 320, 110, 21);
+            mode = Label("", sidebarContent, 20, 260, 320, 38, 21);
             actions = new GameObject("ActionPanel", typeof(RectTransform));
-            actions.transform.SetParent(sidebar, false); Stretch(actions.GetComponent<RectTransform>());
+            actions.transform.SetParent(sidebarContent, false); Stretch(actions.GetComponent<RectTransform>());
             deploy = Button("駒を配置", actions.transform, 20, 300, 320, game.SelectPlacePrisoner);
             move = Button("移動", actions.transform, 20, 355, 320, game.SelectMove);
             place = Button("柵を設置", actions.transform, 20, 410, 320, game.SelectPlaceFence);
             remove = Button("柵を破壊", actions.transform, 20, 465, 320, game.SelectRemoveFence);
             forward = Button("右へ／脱獄 →", actions.transform, 20, 520, 320, game.MoveRightOrEscape);
-            message = Label("", sidebar, 20, 580, 320, 105, 20);
-            Label("操作：左クリックのみ\n柵は辺をクリックして設置\n柵より下の同じ縦筋を保護", sidebar, 20, 695, 320, 85, 17);
+            message = Label("", sidebarContent, 20, 580, 320, 105, 20);
+            help = Label("操作：タップ／クリック\n柵は辺をタップして設置\n柵より下の同じ縦筋を保護", sidebarContent, 20, 695, 320, 85, 17);
 
-            handoff = Panel("HandoffPanel", canvasObject.transform, new Color(.03f, .05f, .09f, .96f)).gameObject;
+            handoff = Panel("HandoffPanel", safeRoot, new Color(.03f, .05f, .09f, .96f)).gameObject;
             RectTransform handoffCard = CenterCard(handoff.transform);
             handoffText = Label("", handoffCard, 30, 35, 540, 140, 28);
             Button("次のプレイヤー開始", handoffCard, 100, 210, 400, game.ConfirmHandoff);
-            result = Panel("ResultPanel", canvasObject.transform, new Color(.03f, .05f, .09f, .96f)).gameObject;
+            result = Panel("ResultPanel", safeRoot, new Color(.03f, .05f, .09f, .96f)).gameObject;
             RectTransform resultCard = CenterCard(result.transform);
             resultText = Label("", resultCard, 30, 35, 540, 140, 28);
             Button("Restart／もう一度", resultCard, 100, 210, 400, game.RestartGame);
@@ -59,7 +68,76 @@ namespace Daidatsugoku
                 events.GetComponent<InputSystemUIInputModule>().AssignDefaultActions();
             }
             game.Changed += Refresh;
+            UpdateLayout();
         }
+
+        private void LateUpdate()
+        {
+            if (layoutWidth != Screen.width || layoutHeight != Screen.height || lastSafeArea != Screen.safeArea)
+                UpdateLayout();
+        }
+
+        private void UpdateLayout()
+        {
+            layoutWidth = Screen.width; layoutHeight = Screen.height; lastSafeArea = Screen.safeArea;
+            if (layoutWidth <= 0 || layoutHeight <= 0) return;
+            bool portrait = layoutHeight > layoutWidth;
+            bool compact = !portrait && (float)layoutWidth / layoutHeight >= 1.7f;
+            scaler.referenceResolution = portrait ? new Vector2(800, 1280) : new Vector2(1280, 800);
+            scaler.matchWidthOrHeight = 0;
+            Rect safe = Screen.safeArea;
+            safeRoot.anchorMin = new Vector2(safe.xMin / layoutWidth, safe.yMin / layoutHeight);
+            safeRoot.anchorMax = new Vector2(safe.xMax / layoutWidth, safe.yMax / layoutHeight);
+            safeRoot.offsetMin = safeRoot.offsetMax = Vector2.zero;
+            sidebar.anchorMin = Vector2.zero;
+            sidebar.anchorMax = portrait ? new Vector2(1, .44f) : new Vector2(.29f, 1);
+            sidebar.offsetMin = sidebar.offsetMax = Vector2.zero;
+
+            // Keep controls inside their panel, including short landscape screens and display cutouts.
+            Canvas.ForceUpdateCanvases();
+            Vector2 designSize = portrait ? new Vector2(800, 520) : new Vector2(360, compact ? 640 : 800);
+            sidebarContent.anchorMin = sidebarContent.anchorMax = new Vector2(.5f, 1);
+            sidebarContent.pivot = new Vector2(.5f, 1);
+            sidebarContent.sizeDelta = designSize;
+            sidebarContent.anchoredPosition = Vector2.zero;
+            float fit = Mathf.Min(sidebar.rect.width / designSize.x, sidebar.rect.height / designSize.y);
+            sidebarContent.localScale = Vector3.one * fit;
+
+            Position(title, 20, compact ? 0 : 20, 320, 50);
+            Position(turn, 20, portrait ? 75 : compact ? 50 : 85, portrait ? 400 : 320, compact ? 35 : 55);
+            Position(score, 20, portrait ? 135 : compact ? 90 : 145, portrait ? 400 : 320, compact ? 75 : 110);
+            Position(mode, 20, portrait ? 250 : compact ? 165 : 260, portrait ? 400 : 320, 38);
+            Position(message, 20, portrait ? 295 : 580, portrait ? 400 : 320, compact ? 60 : 105);
+            Position(help, 20, portrait ? 405 : 695, portrait ? 400 : 320, 85);
+            help.gameObject.SetActive(!compact);
+            score.fontSize = compact ? 18 : 21;
+            mode.fontSize = compact ? 18 : 21;
+            help.fontSize = portrait ? 20 : 17;
+            Button[] buttons = { deploy, move, place, remove, forward };
+            for (int i = 0; i < buttons.Length; i++)
+                SetRect(buttons[i].GetComponent<RectTransform>(), portrait ? 450 : 20,
+                    (portrait ? 20 : compact ? 195 : 300) + i * (portrait ? 100 : compact ? 76 : 55),
+                    320, portrait ? 96 : compact ? 74 : 48);
+            foreach (Button button in buttons)
+            {
+                RectTransform label = button.GetComponentInChildren<Text>().rectTransform;
+                Stretch(label);
+            }
+
+            Camera camera = Camera.main;
+            if (camera != null)
+            {
+                Rect board = portrait ? new Rect(0, .44f, 1, .56f) : new Rect(.29f, 0, .71f, 1);
+                camera.rect = new Rect((safe.x + safe.width * board.x) / layoutWidth,
+                    (safe.y + safe.height * board.y) / layoutHeight,
+                    safe.width * board.width / layoutWidth, safe.height * board.height / layoutHeight);
+                float aspect = camera.rect.width * layoutWidth / (camera.rect.height * layoutHeight);
+                camera.orthographicSize = Mathf.Max(5.5f, 6.4f / aspect);
+            }
+        }
+
+        private static void Position(Text label, float x, float y, float width, float height)
+            => SetRect(label.rectTransform, x, y, width, height);
 
         private void Refresh()
         {
@@ -128,7 +206,6 @@ namespace Daidatsugoku
         private void OnDestroy()
         {
             if (game != null) game.Changed -= Refresh;
-            if (font != null) Destroy(font);
         }
     }
 }

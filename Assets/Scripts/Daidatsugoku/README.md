@@ -1,4 +1,4 @@
-﻿# 大脱獄プロトタイプ
+# 大脱獄プロトタイプ
 
 `Assets/Scenes/Daidatsugoku.unity` を開いて Play。UI・盤面は実行時に自動生成されます。
 シーンの作成メニューは `Tools > Daidatsugoku > Create Prototype Scene`（既存シーンは上書きしません）。
@@ -25,7 +25,7 @@
 
 GameManager＝手番・勝敗、GridManager＝盤面と柵、GuardSystem＝監視、
 Prisoner/GridCell/FenceClick＝クリック、FenceBoundary＝共有境界、GameHud＝UI。名前空間は `Daidatsugoku`。
-UIはUGUIとInput Systemを使用。日本語はWindowsのYu Gothic/Meiryoを使用します。
+UIはUGUIとInput Systemを使用。日本語は同梱のNoto Sans JPを使用します。スマホ向けWeb版の設定は `Docs/MobileWeb.md` を参照してください。
 
 ## 動作検証
 

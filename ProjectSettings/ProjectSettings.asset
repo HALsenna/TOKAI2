@@ -150,7 +150,8 @@ PlayerSettings:
   visionOSBundleVersion: 1.0
   tvOSBundleVersion: 1.0
   bundleVersion: 0.1.0
-  preloadedAssets: []
+  preloadedAssets:
+  - {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   metroInputSource: 0
   wsaTransparentSwapchain: 0
   xboxOneDisableKinectGpuReservation: 1
@@ -775,14 +776,14 @@ PlayerSettings:
   webGLDebugSymbols: 0
   webGLEmscriptenArgs: 
   webGLModulesDirectory: 
-  webGLTemplate: APPLICATION:Default
+  webGLTemplate: PROJECT:Mobile
   webGLAnalyzeBuildSize: 0
   webGLUseEmbeddedResources: 0
-  webGLCompressionFormat: 0
+  webGLCompressionFormat: 1
   webGLWasmArithmeticExceptions: 0
   webGLLinkerTarget: 1
   webGLThreadsSupport: 0
-  webGLDecompressionFallback: 0
+  webGLDecompressionFallback: 1
   webGLInitialMemorySize: 32
   webGLMaximumMemorySize: 2048
   webGLMemoryGrowthMode: 2
@@ -798,6 +799,7 @@ PlayerSettings:
   webProgressiveAssetLoading: 0
   scriptingDefineSymbols:
     Standalone: SENTIS_ANALYTICS_ENABLED;APP_UI_EDITOR_ONLY
+    WebGL: SENTIS_ANALYTICS_ENABLED
   additionalCompilerArguments: {}
   platformArchitecture: {}
   scriptingBackend:
@@ -806,7 +808,8 @@ PlayerSettings:
   il2cppCodeGeneration: {}
   il2cppLTOMode: {}
   il2cppStacktraceInformation: {}
-  managedStrippingLevel: {}
+  managedStrippingLevel:
+    WebGL: 3
   incrementalIl2cppBuild: {}
   suppressCommonWarnings: 1
   allowUnsafeCode: 0

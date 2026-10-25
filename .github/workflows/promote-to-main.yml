@@ -111,3 +111,5 @@ jobs:
     uses: ./.github/workflows/request-codex-review.yml
     with:
       pr_number: ${{ needs.promote.outputs.promotion_pr }}
+    secrets:
+      CODEX_REVIEW_TOKEN: ${{ secrets.CODEX_REVIEW_TOKEN }}

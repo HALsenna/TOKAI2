@@ -12,6 +12,10 @@ on:
         description: Main pull request number
         required: true
         type: string
+    secrets:
+      CODEX_REVIEW_TOKEN:
+        description: Fine-grained PR-write token for the human account connected to Codex
+        required: false
 
 permissions:
   contents: read
@@ -26,11 +30,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Check Codex review credential
+        env:
+          CODEX_REVIEW_TOKEN: ${{ secrets.CODEX_REVIEW_TOKEN }}
+        run: |
+          if [ -z "$CODEX_REVIEW_TOKEN" ]; then
+            echo "::error::Set the CODEX_REVIEW_TOKEN repository secret to a fine-grained token for the human GitHub account connected to Codex (TOKAI2 only; Pull requests read/write). GITHUB_TOKEN bot comments do not start Codex reviews."
+            exit 1
+          fi
       - name: Request one Codex review per head commit
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0 (Node.js 24)
         env:
           PR_NUMBER: ${{ inputs.pr_number || github.event.pull_request.number }}
         with:
+          github-token: ${{ secrets.CODEX_REVIEW_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
             const input = process.env.PR_NUMBER;
@@ -46,10 +59,11 @@ jobs:
             }
 
             const marker = `<!-- codex-main-auto-review:${pr.head.sha} -->`;
+            const { data: requester } = await github.rest.users.getAuthenticated();
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner, repo, issue_number: pull_number, per_page: 100
             });
-            if (comments.some(comment => comment.user?.login === 'github-actions[bot]' &&
+            if (comments.some(comment => comment.user?.login === requester.login &&
                                         comment.body?.includes(marker))) {
               core.notice('Codex review has already been requested for this head commit.');
               return;

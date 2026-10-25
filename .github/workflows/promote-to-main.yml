@@ -27,7 +27,7 @@ jobs:
     steps:
       # No checkout: merged project code is never executed with this token.
       - name: Create main PR from the merged snapshot
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea9 # v7
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0 (Node.js 24)
         env:
           SOURCE_PR: ${{ github.event.pull_request.number || inputs.source_pr }}
         with:

@@ -1,178 +1,481 @@
-﻿using System;
+using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Daidatsugoku;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.EventSystems;
+using UnityEngine.UI;
 
-// Run against the real Play-mode scene, including handoff locks and guard coroutines.
+// Explicit test fixtures do not supply production card effects, monitoring rates,
+// or otherwise undefined response priorities.
+public sealed class TurnCheckCard : SkillCardDefinition
+{
+    public bool ForceImmediate;
+    public int Target = -1;
+    public Func<GameManager, int, TurnEvent, bool> Condition;
+    public Action<GameManager, int, TurnEvent> Effect;
+    public override bool Immediate => ForceImmediate;
+    public override int TargetPlayer(GameManager game, int owner) => Target;
+    public override bool CanPlay(GameManager game, int owner, TurnEvent trigger) => Condition != null && Condition(game, owner, trigger);
+    public override void Resolve(GameManager game, int owner, TurnEvent trigger) => Effect?.Invoke(game, owner, trigger);
+}
+public sealed class TurnCheckRules : NormalActionRules
+{
+    public bool Deploy, Move, Fences;
+    public override bool CanDeploy(GameManager game, int owner, Vector2Int cell) => Deploy && game.Grid.IsInside(cell) && game.ReserveCount(owner) > 0;
+    public override bool CanMove(GameManager game, Prisoner piece, Vector2Int destination) => Move && piece != null && piece.IsOnBoard && game.Grid.CanMove(piece.Cell, destination);
+    public override bool CanEscape(GameManager game, Prisoner piece) => Move && piece != null && piece.IsOnBoard && game.Grid.IsExitCell(piece.Cell);
+    public override bool CanChangeFence(GameManager game, int owner, FenceBoundary boundary, bool placing) => Fences && game.Grid.IsValidBoundary(boundary) && game.Grid.HasFence(boundary) != placing;
+}
+public sealed class TurnCheckPolicy : TurnFlowPolicy
+{
+    public bool PlanChains;
+    public bool AllowGuardOrder = true;
+    public int A, B, First;
+    public override bool TryPlanResponses(GameManager game, TurnEvent trigger, IReadOnlyList<int> eligibleOwners, out ResponsePlan plan, out string reason)
+    {
+        reason = null;
+        plan = PlanChains && eligibleOwners.Count > 0 ? new ResponsePlan(A, B, First) : ResponsePlan.WithoutResponses;
+        return true;
+    }
+    public override bool TryOrderGuardResponses(IReadOnlyList<int> owners, out int[] order)
+    {
+        order = AllowGuardOrder ? owners.OrderBy(owner => owner).ToArray() : null;
+        return order != null;
+    }
+}
+public sealed class TurnCheckMonitoring : GuardCardSource
+{
+    public PatrolCard Card;
+    public int Draws;
+    public readonly List<PatrolCard> History = new();
+    public override void ResetSession() { Draws = 0; History.Clear(); }
+    public override bool TryDraw(int round, out PatrolCard card, out string reason)
+    {
+        card = Card; reason = null; Draws++; History.Add(card); return true;
+    }
+}
+
 public static class DaidatsugokuPrototypeChecks
 {
     public static string LastReport { get; private set; } = "Not run";
-    private static IEnumerator routine;
+    private static readonly Stack<IEnumerator> routines = new();
+    private static readonly List<ScriptableObject> fixtures = new();
+    private static readonly Dictionary<FieldInfo, object> originalSettings = new();
     private static GameManager game;
-    private static System.Reflection.FieldInfo delayField;
-    private static float originalDelay;
+    private static GuardCardSource originalMonitoring;
+    private static UnityEngine.Random.State originalRandom;
+    private static int assertions;
 
     [MenuItem("Tools/Daidatsugoku/Run Play Mode Checks")]
     public static void Run()
     {
-        if (!EditorApplication.isPlaying) throw new InvalidOperationException("Open the prototype and enter Play mode first.");
-        if (routine != null) throw new InvalidOperationException("Checks are already running.");
+        if (!EditorApplication.isPlaying) throw new InvalidOperationException("Enter Play mode in the prototype scene first.");
+        if (routines.Count > 0) throw new InvalidOperationException("Play mode checks are already running.");
         game = UnityEngine.Object.FindFirstObjectByType<GameManager>();
-        if (game == null) throw new InvalidOperationException("Prototype GameManager not found.");
-        delayField = typeof(GameManager).GetField("guardRevealSeconds", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        originalDelay = (float)delayField.GetValue(game); delayField.SetValue(game, 0f);
-        LastReport = "Running"; routine = Checks(); EditorApplication.update += Tick;
+        if (game == null) throw new InvalidOperationException("The active scene has no GameManager.");
+        originalSettings.Clear();
+        foreach (FieldInfo field in typeof(GameManager).GetFields(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance))
+            if (field.IsDefined(typeof(SerializeField), true)) originalSettings.Add(field, field.GetValue(game));
+        originalMonitoring = game.Guard.MonitoringSource; originalRandom = UnityEngine.Random.state;
+        assertions = 0; LastReport = "Running";
+        routines.Push(Checks()); EditorApplication.update += Tick;
     }
-
     private static void Tick()
     {
         try
         {
-            if (!EditorApplication.isPlaying || game == null) throw new InvalidOperationException("Play mode ended during checks.");
+            if (!EditorApplication.isPlaying || game == null) throw new InvalidOperationException("Play mode ended while checks were running.");
             EditorApplication.QueuePlayerLoopUpdate();
-            if (routine.MoveNext()) return;
-            LastReport = "PASS: stepped 25-cell board, 5 initial boundary fences, shared boundaries, downstream ray protection, offset adjacency, row-specific exits, reserve deployment, pointer selection, input locks, duplicate rejection, removal, capture, draw, deck refill, full victory, retry.";
+            while (routines.Count > 0)
+            {
+                IEnumerator current = routines.Peek();
+                if (!current.MoveNext()) { routines.Pop(); (current as IDisposable)?.Dispose(); continue; }
+                if (current.Current is IEnumerator nested) { routines.Push(nested); continue; }
+                return;
+            }
+            LastReport = $"PASS: {assertions} assertions; DEV-TURN-001 real-scene initialization, turns, cards, chains, monitoring, victory, board and HUD checks.";
             Debug.Log(LastReport); Cleanup();
         }
         catch (Exception exception)
         {
-            LastReport = "FAIL: " + exception.Message; Debug.LogException(exception); Cleanup();
+            LastReport = $"FAIL after {assertions} assertions: {exception.Message}";
+            Debug.LogException(exception); Cleanup();
         }
     }
-
     private static void Cleanup()
     {
-        EditorApplication.update -= Tick; routine = null;
-        if (game != null) { delayField.SetValue(game, originalDelay); game.RestartGame(); }
+        EditorApplication.update -= Tick;
+        while (routines.Count > 0) (routines.Pop() as IDisposable)?.Dispose();
     }
-    private static void Require(bool value, string message) { if (!value) throw new Exception(message); }
-    private static Prisoner P(int index) => game.Prisoners[index];
-    private static void ToggleSpareFence()
+    private static void Restore()
     {
-        Vector2Int spare = new(4, 3);
-        if (game.Grid.HasFence(spare)) game.SelectRemoveFence(); else game.SelectPlaceFence();
-        game.OnCellClicked(spare);
+        try
+        {
+            if (game != null)
+            {
+                foreach (var setting in originalSettings) setting.Key.SetValue(game, setting.Value);
+                game.Guard.MonitoringSource = originalMonitoring; game.RestartGame();
+            }
+        }
+        finally
+        {
+            foreach (ScriptableObject fixture in fixtures) if (fixture != null) UnityEngine.Object.DestroyImmediate(fixture);
+            fixtures.Clear(); originalSettings.Clear(); UnityEngine.Random.state = originalRandom;
+        }
     }
-
-    // Legacy movement/guard scenarios start with all pieces deployed.
-    private static void RestartWithDeployedPieces()
+    private static T Fixture<T>(string label) where T : ScriptableObject
     {
-        game.RestartGame();
-        for (int row = 0; row < GridManager.RowCount; row++)
-        for (int x = 0; x < game.Grid.GetRowLength(row); x++) game.Grid.RemoveFence(new Vector2Int(x, row));
-        foreach (Prisoner prisoner in game.Prisoners) prisoner.Deploy(new Vector2Int(0, prisoner.Owner));
-        game.Grid.RefreshPiecePositions(game.Prisoners);
-        game.SelectMove();
+        T fixture = ScriptableObject.CreateInstance<T>(); fixture.name = "CHECK_" + label;
+        fixture.hideFlags = HideFlags.HideAndDontSave; fixtures.Add(fixture); return fixture;
+    }
+    private static void Require(bool condition, string message)
+    {
+        assertions++; if (!condition) throw new InvalidOperationException(message);
+    }
+    private static void Throws<T>(Action action, string message) where T : Exception
+    {
+        bool threw = false; try { action(); } catch (T) { threw = true; } Require(threw, message);
+    }
+    private static TurnCheckCard Card(string label, Func<GameManager, int, TurnEvent, bool> condition = null, Action<GameManager, int, TurnEvent> effect = null)
+    {
+        TurnCheckCard card = Fixture<TurnCheckCard>(label); card.Condition = condition; card.Effect = effect; return card;
+    }
+    private static IEnumerable<SkillCardDefinition> Deck(SkillCardDefinition card, int count = 32) => Enumerable.Repeat(card, count);
+    private static Prisoner Piece(int owner, int index = 0) => game.Prisoners.Where(piece => piece.Owner == owner).ElementAt(index);
+    private static TurnEvent Root(TurnEvent trigger) { while (trigger?.Parent != null) trigger = trigger.Parent; return trigger; }
+    private static void Begin(int players, SkillCardDefinition inert, NormalActionRules rules, TurnFlowPolicy policy, GuardCardSource monitoring = null)
+    {
+        game.Configure(players, Deck(inert), rules, policy); game.Guard.MonitoringSource = monitoring;
+        game.InitializeGame(); game.StartFirstTurn();
+    }
+    private static void Give(int owner, SkillCardDefinition card)
+    {
+        game.Cards.Reset(new[] { card }, upper => upper - 1); Require(game.DrawSkillCard(owner), "Fixture card could not be drawn");
+    }
+    private static int CardIndex(int owner, SkillCardDefinition card)
+    {
+        for (int index = 0; index < game.Hand(owner).Count; index++) if (game.Hand(owner)[index] == card) return index;
+        throw new InvalidOperationException("Fixture card is missing from hand");
+    }
+    private static void Play(int owner, SkillCardDefinition card) => game.UseCard(owner, CardIndex(owner, card));
+    private static T Hud<T>(string fieldName) where T : class
+    {
+        FieldInfo field = typeof(GameHud).GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance);
+        T value = field?.GetValue(game.GetComponent<GameHud>()) as T;
+        Require(value != null, "HUD field is not connected: " + fieldName); return value;
+    }
+    private static IEnumerator Until(Func<bool> condition, string message)
+    {
+        double deadline = EditorApplication.timeSinceStartup + 8;
+        while (!condition() && EditorApplication.timeSinceStartup < deadline) yield return null;
+        Require(condition(), message + " (phase " + game.Phase + ")");
     }
     private static IEnumerator Checks()
     {
-        game.RestartGame(); yield return null;
+        try
+        {
+            FieldInfo delay = typeof(GameManager).GetField("guardRevealSeconds", BindingFlags.NonPublic | BindingFlags.Instance);
+            Require(delay != null, "Guard reveal delay field missing"); delay.SetValue(game, 0f);
+            TurnCheckCard inert = Card("EventOnly", (manager, owner, trigger) => false);
+            TurnCheckPolicy policy = Fixture<TurnCheckPolicy>("ExplicitNoResponses");
+            TurnCheckMonitoring quiet = Fixture<TurnCheckMonitoring>("NotWatching"); quiet.Card = PatrolCard.NotWatching;
+            CheckChain(); CheckPile(inert); CheckInitialization(inert, policy); CheckBoard();
+            yield return CheckTurns(inert, policy, quiet);
+            yield return CheckPasses(inert, policy);
+            CheckCards(inert, policy); CheckPolicyWait(inert, policy); CheckInterruptedAction(inert);
+            CheckActivationCancellation(inert); CheckUnresolvedEffects(inert); CheckActionOverflow(inert);
+            yield return CheckMonitoring(inert);
+            CheckVictory(inert); yield return null;
+        }
+        finally { Restore(); }
+    }
+    private static void CheckChain()
+    {
+        Throws<ArgumentException>(() => new ResponseChain<string>(1, 1, 1), "Chain accepted identical participants");
+        Throws<ArgumentException>(() => new ResponseChain<string>(1, 2, 3), "Chain accepted an external first responder");
+        var chain = new ResponseChain<string>(1, 2, 2);
+        Require(chain.Responder == 2 && chain.Count == 0 && !chain.Closed, "Externally supplied first responder ignored");
+        Require(chain.Contains(1) && chain.Contains(2) && !chain.Contains(3), "Participant membership failed");
+        Require(!chain.TryAdd(3, "third") && !chain.TryPass(1), "Chain accepted outsider or out-of-turn pass");
+        Throws<InvalidOperationException>(() => chain.ResolutionOrder(), "Chain resolved before closing");
+        Require(chain.TryAdd(2, "earlier") && chain.TryPass(1) && chain.ConsecutivePasses == 1, "Response or first pass failed");
+        Require(chain.TryAdd(2, "later") && chain.ConsecutivePasses == 0 && chain.Responder == 1, "New response did not reset passes");
+        Require(chain.TryPass(1) && chain.TryPass(2) && chain.Closed, "Two passes did not close chain");
+        Require(!chain.TryAdd(1, "late") && !chain.TryPass(1), "Closed chain accepted input");
+        IReadOnlyList<string> resolution = chain.ResolutionOrder();
+        Require(resolution.SequenceEqual(new[] { "later", "earlier" }), "Chain resolution is not LIFO");
+        Throws<NotSupportedException>(() => ((IList<string>)resolution)[0] = "changed", "Chain snapshot is mutable");
+        Require(chain.ResolutionOrder()[0] == "later", "Resolution snapshot exposed storage");
+    }
+    private static void CheckPile(SkillCardDefinition inert)
+    {
+        TurnCheckCard other = Card("OtherUnplayable"); var pile = new SkillCardPile();
+        pile.Reset(new[] { inert, other }, upper => upper - 1);
+        Require(pile.TryDraw(out SkillCardDefinition held) && held == other && pile.DrawCount == 1, "Pile initial draw failed");
+        Require(pile.TryDraw(out SkillCardDefinition used) && used == inert, "Pile second draw failed"); pile.Discard(used);
+        Require(pile.DrawCount == 0 && pile.Used.Count == 1, "Discard did not enter used pile");
+        Require(pile.TryDraw(out SkillCardDefinition recycled) && recycled == inert && pile.Used.Count == 0, "Used cards did not refill pile");
+        Require(!pile.TryDraw(out _) && held == other, "Refill recovered a held card");
+    }
+    private static void CheckInitialization(SkillCardDefinition inert, TurnCheckPolicy policy)
+    {
+        Throws<ArgumentException>(() => game.Configure(1, Deck(inert)), "One-player setup accepted");
+        Throws<ArgumentException>(() => game.Configure(5, Deck(inert)), "Five-player setup accepted");
+        for (int players = 2; players <= 4; players++)
+        {
+            int previousPieces = game.Prisoners.Count; game.Configure(players, Deck(inert), null, policy);
+            Require(game.Prisoners.Count == previousPieces, "Configure changed scene before initialization"); game.InitializeGame();
+            Require(game.PlayerCount == players && game.Phase == TurnPhase.Setup && game.Round == 1, "Initialization phase/count/round failed");
+            Require(game.TurnOrder.OrderBy(owner => owner).SequenceEqual(Enumerable.Range(0, players)), "Turn order is not a permutation");
+            Require(game.Prisoners.Count == players * 3 && game.Prisoners.All(piece => piece.IsInReserve && !piece.IsOnBoard), "Prisoners did not start in reserve");
+            for (int owner = 0; owner < players; owner++) Require(game.Hand(owner).Count == 0 && game.EscapedCount(owner) == 0 && game.OnBoardCount(owner) == 0, "Initial hand/escape/on-board count is not zero");
+            Require(game.Winner == -1 && game.Grid.FenceCount == 5, "Initial winner/fences failed");
+        }
+        var orders = new HashSet<string>();
+        for (int seed = 0; seed < 12; seed++) { UnityEngine.Random.InitState(seed); game.InitializeGame(); orders.Add(string.Join(",", game.TurnOrder)); }
+        Require(orders.Count > 1, "Turn order stayed constant across random seeds");
+    }
+    private static void CheckBoard()
+    {
         int cells = 0;
         for (int row = 0; row < GridManager.RowCount; row++)
         {
-            Require(game.Grid.GetRowLength(row) == row + 3, "Row length incorrect");
-            for (int x = 0; x < game.Grid.GetRowLength(row); x++) cells++;
-            Require(game.Grid.IsExitCell(new Vector2Int(row + 2, row)), "Row exit incorrect");
+            Require(game.Grid.GetRowLength(row) == row + 3, "Existing stepped row changed"); cells += game.Grid.GetRowLength(row);
+            Require(game.Grid.IsExitCell(new Vector2Int(row + 2, row)), "Existing exit changed");
         }
-        Require(cells == 25 && game.Grid.FenceCount == 5, "Board/fence count incorrect");
-        Vector2Int[] initial = { new(0, 1), new(0, 2), new(2, 2), new(4, 3), new(2, 4) };
-        foreach (Vector2Int cell in initial) Require(game.Grid.HasFence(cell), "Initial fence missing");
-        Require(game.Grid.BoundaryOf(new Vector2Int(0, 1), CellEdge.South).Equals(game.Grid.BoundaryOf(new Vector2Int(0, 2), CellEdge.North)), "Shared boundary key incorrect");
-        Require(!game.Grid.PlaceFence(game.Grid.BoundaryOf(new Vector2Int(0, 1), CellEdge.South)), "Opposite-side duplicate fence accepted");
-        Require(game.Grid.IsProtected(new Vector2Int(1, 4)) && game.Grid.IsProtected(new Vector2Int(3, 4)), "Downstream protection failed");
-        Require(!game.Grid.IsProtected(Vector2Int.zero) && !game.Grid.IsProtected(new Vector2Int(2, 0)), "Fence incorrectly protected upstream cells");
-        FenceBoundary vertical = game.Grid.BoundaryOf(new Vector2Int(1, 0), CellEdge.West);
-        Require(game.Grid.PlaceFence(vertical) && !game.Grid.IsProtected(new Vector2Int(1, 0)), "Vertical boundary incorrectly blocked downward sight");
-        game.Grid.RemoveFence(vertical);
-        Require(!game.Grid.CanMove(Vector2Int.zero, new Vector2Int(0, 1)) && game.Grid.CanMove(Vector2Int.zero, new Vector2Int(1, 1)), "Offset adjacency incorrect");
-        game.RestartGame();
-        Require(game.OnBoardCount(0) == 0 && game.ReserveCount(0) == 3 && game.MustPlacePrisoner, "Reserve setup failed");
-        game.SelectPlaceFence(); game.SelectMove(); game.SelectRemoveFence();
-        Require(game.Action == PlayerAction.PlacePrisoner, "Mandatory deployment allowed another action");
-        game.OnCellClicked(new Vector2Int(-1, 0));
-        Require(game.State == GameState.Player1Turn && game.ReserveCount(0) == 3, "Invalid deployment consumed turn");
-        game.OnCellClicked(new Vector2Int(4, 3));
-        Require(game.State == GameState.Handoff && game.OnBoardCount(0) == 1 && game.ReserveCount(0) == 2 && P(0).Cell == new Vector2Int(4, 3), "Free deployment failed");
-        game.ConfirmHandoff();
-        Require(game.MustPlacePrisoner && game.State != GameState.Result, "Reserve pieces ignored in result check");
-        game.RestartGame(); P(0).Deploy(Vector2Int.zero); game.SelectPlaceFence();
-        Require(game.Action == PlayerAction.PlaceFence && !game.MustPlacePrisoner, "Fence choice with deployed piece failed");
-        game.SelectPlacePrisoner(); game.OnPrisonerClicked(P(0));
-        Require(game.OnBoardCount(0) == 2 && game.ReserveCount(0) == 1 && game.State == GameState.Handoff, "Additional deployment on occupied cell failed");
-        RestartWithDeployedPieces();
-        game.SelectPlaceFence();
-        GridCell tile = game.GetComponentsInChildren<GridCell>().First(c => c.Cell == Vector2Int.zero);
-        var edgeClick = new PointerEventData(EventSystem.current);
-        edgeClick.pointerCurrentRaycast = new RaycastResult { worldPosition = game.Grid.WorldPosition(Vector2Int.zero) + Vector3.right * .65f };
-        ExecuteEvents.Execute(tile.gameObject, edgeClick, ExecuteEvents.pointerClickHandler);
-        FenceBoundary east = game.Grid.BoundaryOf(Vector2Int.zero, CellEdge.East);
-        Require(game.Grid.HasFence(east) && game.State == GameState.Handoff, "Pointer edge placement failed");
-        game.ConfirmHandoff(); game.SelectRemoveFence();
-        tile = game.GetComponentsInChildren<GridCell>().First(c => c.Cell == new Vector2Int(1, 0));
-        edgeClick.pointerCurrentRaycast = new RaycastResult { worldPosition = game.Grid.WorldPosition(tile.Cell) + Vector3.left * .65f };
-        ExecuteEvents.Execute(tile.gameObject, edgeClick, ExecuteEvents.pointerClickHandler);
-        Require(!game.Grid.HasFence(east) && game.State == GameState.Handoff, "Opposite edge pointer removal failed");
-        RestartWithDeployedPieces(); yield return null;
-        Require(game.Prisoners.Count == 9 && game.State == GameState.Player1Turn, "Setup failed");
-        for (int i = 0; i < 9; i++) Require(P(i).Cell == new Vector2Int(0, i / 3), "Initial cell incorrect");
-        ExecuteEvents.Execute(P(0).gameObject, new PointerEventData(EventSystem.current), ExecuteEvents.pointerClickHandler);
-        game.OnCellClicked(new Vector2Int(2, 0));
-        Require(P(0).Cell == Vector2Int.zero && game.State == GameState.Player1Turn, "Invalid move consumed turn");
-        game.OnCellClicked(new Vector2Int(0, 1));
-        Require(game.State == GameState.Player1Turn, "Diagonal step consumed turn");
-        game.OnCellClicked(new Vector2Int(1, 1));
-        Require(P(0).Cell == new Vector2Int(1, 1) && game.State == GameState.Handoff, "Vertical move failed");
-        game.SelectPlaceFence(); game.OnCellClicked(new Vector2Int(4, 3));
-        Require(!game.Grid.HasFence(new Vector2Int(4, 3)), "Handoff allowed board input");
-        game.ConfirmHandoff(); Require(game.State == GameState.Player2Turn, "Handoff failed");
-
-        RestartWithDeployedPieces();
-        game.SelectPlaceFence(); game.OnPrisonerClicked(P(0));
-        Require(game.Grid.HasFence(Vector2Int.zero) && game.State == GameState.Handoff, "Fence on occupied cell failed");
-        game.ConfirmHandoff(); game.SelectPlaceFence(); game.OnCellClicked(Vector2Int.zero);
-        Require(game.State == GameState.Player2Turn && game.Grid.FenceCount == 1, "Duplicate fence consumed turn");
-        game.SelectRemoveFence(); game.OnCellClicked(Vector2Int.zero);
-        Require(!game.Grid.HasFence(Vector2Int.zero) && game.State == GameState.Handoff, "Fence removal failed");
-
-        RestartWithDeployedPieces();
-        P(0).MoveTo(new Vector2Int(1, 0)); game.Grid.PlaceFence(Vector2Int.zero);
-        int captures = game.Guard.Resolve(game.Guard.DrawCard(), game.Grid, game.Prisoners);
-        Require(captures == 7 && P(0).Captured && P(1).IsOnBoard && P(2).IsOnBoard, "Same-cell protection/capture failed");
-        for (int i = 0; i < 20; i++) game.Guard.DrawCard();
-
-        RestartWithDeployedPieces();
-        for (int player = 0; player < 3; player++)
+        Require(cells == 25, "Existing board cell count changed");
+        foreach (Vector2Int cell in new[] { new Vector2Int(0, 1), new Vector2Int(0, 2), new Vector2Int(2, 2), new Vector2Int(4, 3), new Vector2Int(2, 4) }) Require(game.Grid.HasFence(cell), "Existing initial fence changed");
+        FenceBoundary shared = game.Grid.BoundaryOf(new Vector2Int(0, 1), CellEdge.South);
+        Require(shared.Equals(game.Grid.BoundaryOf(new Vector2Int(0, 2), CellEdge.North)), "Shared boundary identity changed");
+        Require(!game.Grid.PlaceFence(shared), "Shared boundary accepted duplicate fence");
+        Require(game.Grid.IsProtected(new Vector2Int(1, 4)) && !game.Grid.IsProtected(Vector2Int.zero), "Existing shielding changed");
+        Require(!game.Grid.CanMove(Vector2Int.zero, new Vector2Int(0, 1)) && game.Grid.CanMove(Vector2Int.zero, new Vector2Int(1, 1)), "Existing offset adjacency changed");
+    }
+    private static IEnumerator CheckTurns(SkillCardDefinition inert, TurnCheckPolicy policy, TurnCheckMonitoring quiet)
+    {
+        Begin(4, inert, null, policy, quiet); int[] order = game.TurnOrder.ToArray();
+        Require(game.CurrentPlayer == order[0] && game.Hand(order[0]).Count == 1 && game.Phase == TurnPhase.PlayerInput, "First turn/draw failed");
+        Require(!game.ActionConsumed && !game.ActionDeclared && !game.CanEndTurn, "Action obligation missing");
+        Require(!Hud<Button>("endTurn").interactable, "HUD enabled premature end turn"); game.EndTurn();
+        Require(game.CurrentPlayer == order[0] && game.Phase == TurnPhase.PlayerInput, "Premature turn end accepted");
+        game.SelectPlaceFence(); Require(game.Action == PlayerAction.PlaceFence, "Undefined mandatory deployment added");
+        game.SelectPlacePrisoner(); game.OnCellClicked(new Vector2Int(-1, 0));
+        Require(!game.ActionConsumed && !game.ActionDeclared, "Invalid action consumed/declaration accepted");
+        Piece(order[0]).Deploy(new Vector2Int(4, 3)); game.OnCellClicked(new Vector2Int(4, 3));
+        Require(game.OnBoardCount(order[0]) == 2 && game.Prisoners.Count(piece => piece.Owner == order[0] && piece.Cell == new Vector2Int(4, 3) && piece.IsOnBoard) == 2, "Arbitrary/cohabiting deployment lost");
+        Require(game.ActionConsumed && game.Phase == TurnPhase.PlayerInput && game.CurrentPlayer == order[0], "Action automatically ended turn");
+        int onBoard = game.OnBoardCount(order[0]); game.OnCellClicked(Vector2Int.zero);
+        Require(game.OnBoardCount(order[0]) == onBoard, "Second action accepted");
+        Require(game.CanEndTurn && Hud<Button>("endTurn").interactable, "End turn did not unlock");
+        Hud<Button>("endTurn").onClick.Invoke(); Require(game.Phase == TurnPhase.Handoff, "HUD end turn not wired"); game.ConfirmHandoff();
+        for (int index = 1; index < order.Length; index++)
         {
-            game.OnPrisonerClicked(P(player * 3)); game.MoveRightOrEscape();
-            if (player < 2) game.ConfirmHandoff();
+            Require(game.CurrentPlayer == order[index] && game.Hand(order[index]).Count == 1, "Fixed order/turn draw failed");
+            game.SelectPlacePrisoner(); game.OnCellClicked(new Vector2Int(index, 2));
+            Require(game.ActionConsumed && game.Phase == TurnPhase.PlayerInput, "Action consumption failed"); game.EndTurn();
+            if (index < order.Length - 1) { Require(game.Phase == TurnPhase.Handoff, "Handoff missing"); game.ConfirmHandoff(); }
         }
-        double deadline = EditorApplication.timeSinceStartup + 5;
-        while (game.State == GameState.GuardTurn && EditorApplication.timeSinceStartup < deadline) yield return null;
-        Require(game.State == GameState.Result && game.Prisoners.All(p => p.Captured), "Automatic guard/draw failed");
-        game.OnCellClicked(Vector2Int.zero); game.ConfirmHandoff();
-        Require(game.State == GameState.Result, "Result accepted input");
+        yield return Until(() => game.Phase == TurnPhase.Handoff && game.Round == 2, "Guard did not finish round");
+        Require(quiet.Draws == 1 && quiet.History.SequenceEqual(new[] { PatrolCard.NotWatching }), "Monitoring did not draw exactly once after all turns");
+        Require(game.Prisoners.Count(piece => piece.IsOnBoard) == 5 && game.Prisoners.All(piece => !piece.Captured), "Not-watching affected prisoners"); game.ConfirmHandoff();
+        Require(game.CurrentPlayer == order[0] && game.Hand(order[0]).Count == 2 && game.TurnOrder.SequenceEqual(order), "Next round rerolled order/omitted draw");
+        Require(game.GetComponentsInChildren<Prisoner>(true).Length == 12, "Initialization leaked prisoners");
+    }
+    private static IEnumerator CheckPasses(SkillCardDefinition inert, TurnCheckPolicy policy)
+    {
+        TurnCheckRules blocked = Fixture<TurnCheckRules>("NoActions");
+        TurnCheckCard playable = Card("PlayOrPass", (manager, owner, trigger) => trigger == null);
+        game.Configure(2, Deck(playable), blocked, policy); game.InitializeGame(); game.StartFirstTurn();
+        Require(game.Phase == TurnPhase.PlayerInput && game.CanEndTurn && !game.ActionConsumed, "Blocked player lost card/pass choice");
+        game.EndTurn(); Require(game.Phase == TurnPhase.Handoff, "Voluntary pass failed");
+        int effects = 0;
+        TurnCheckCard unlock = Card("EnableDeploy", (manager, owner, trigger) => trigger == null, (manager, owner, trigger) => { effects++; blocked.Deploy = true; });
+        game.Configure(2, Deck(unlock), blocked, policy); game.InitializeGame(); game.StartFirstTurn(); game.UseCard(game.CurrentPlayer, 0);
+        Require(effects == 1 && !game.ActionConsumed && game.Phase == TurnPhase.PlayerInput && !game.CanEndTurn, "Card did not restore action obligation");
+        blocked.Deploy = false; game.Configure(2, Deck(inert), blocked, policy); game.Guard.MonitoringSource = null; game.InitializeGame(); game.StartFirstTurn();
+        yield return Until(() => game.Phase == TurnPhase.WaitingForSpecification, "Unplayable cards blocked automatic pass");
+        Require(game.Round == 1 && game.Hand(0).Count == 1 && game.Hand(1).Count == 1 && game.Prisoners.All(piece => piece.IsInReserve), "Auto pass skipped draw/performed action");
+        Require(!game.CanEndTurn && !Hud<Button>("endTurn").interactable, "Missing monitoring source did not lock flow");
+        TurnCheckMonitoring quiet = Fixture<TurnCheckMonitoring>("RetryMonitoring"); quiet.Card = PatrolCard.NotWatching;
+        game.Guard.MonitoringSource = quiet; game.RetryPendingSpecification();
+        yield return Until(() => game.Round == 2, "Monitoring retry did not resume"); Require(quiet.Draws == 1, "Retry duplicated monitoring draw");
+    }
+    private static void CheckCards(SkillCardDefinition inert, TurnCheckPolicy policy)
+    {
+        int immediateEffects = 0;
+        TurnCheckCard immediate = Card("Immediate", (manager, owner, trigger) => true, (manager, owner, trigger) => immediateEffects++); immediate.ForceImmediate = true;
+        game.Configure(2, new[] { immediate }, null, policy); game.InitializeGame();
+        Require(game.Hand(0).Count == 0 && game.Hand(1).Count == 0, "Setup drew initial hand"); game.StartFirstTurn();
+        Require(immediateEffects == 1 && game.Hand(game.CurrentPlayer).Count == 0 && game.Cards.Used.Contains(immediate), "Immediate card not forced/discarded");
+        Require(game.Phase == TurnPhase.PlayerInput && !game.ActionConsumed, "Immediate card consumed action");
+        Begin(2, inert, null, policy); int owner = game.CurrentPlayer;
+        for (int index = 0; index < 5; index++) Give(owner, Card("Overflow_" + index));
+        Require(game.Hand(owner).Count == 6 && game.Phase == TurnPhase.ChooseDiscard && game.OverflowPlayer == owner, "Hand overflow did not suspend flow");
+        Require(!game.CanEndTurn && Hud<GameObject>("handPanel").activeSelf, "Overflow input lock/UI failed");
+        game.SelectPlacePrisoner(); game.OnCellClicked(Vector2Int.zero); Require(game.OnBoardCount(owner) == 0, "Overflow allowed action");
+        SkillCardDefinition newest = game.Hand(owner)[5];
+        Require(Hud<Button>("nextPage").interactable, "Overflow sixth card has no UI page");
+        Hud<Button>("nextPage").onClick.Invoke(); Hud<Button[]>("cardButtons")[0].onClick.Invoke();
+        Require(game.Hand(owner).Count == 5 && !game.Hand(owner).Contains(newest) && game.Cards.Used.Contains(newest), "Newly drawn card could not be discarded");
+        Require(game.Phase == TurnPhase.PlayerInput, "Discard did not resume player turn");
+        TurnCheckCard newestAgain = Card("KeepNew"); Give(owner, newestAgain); SkillCardDefinition oldest = game.Hand(owner)[0]; game.DiscardOverflow(owner, 0);
+        Require(game.Hand(owner).Count == 5 && game.Hand(owner).Contains(newestAgain) && !game.Hand(owner).Contains(oldest), "Older card could not be discarded");
+        Begin(2, inert, null, policy); int freeEffects = 0;
+        TurnCheckCard free = Card("RepeatFree", (manager, player, trigger) => trigger == null, (manager, player, trigger) => freeEffects++);
+        for (int index = 0; index < 7; index++) { Give(game.CurrentPlayer, free); Play(game.CurrentPlayer, free); }
+        Require(freeEffects == 7 && !game.ActionConsumed && game.Phase == TurnPhase.PlayerInput, "Common card cap/action cost introduced");
+        game.Configure(2, Array.Empty<SkillCardDefinition>(), null, policy); game.InitializeGame(); game.StartFirstTurn();
+        Require(game.Phase == TurnPhase.WaitingForSpecification && game.Hand(game.CurrentPlayer).Count == 0 && game.Round == 1, "Both piles empty silently skipped draw");
+        int waitingOwner = game.CurrentPlayer; game.Cards.Discard(inert); game.RetryPendingSpecification();
+        Require(game.Phase == TurnPhase.PlayerInput && game.CurrentPlayer == waitingOwner && game.Hand(waitingOwner).Count == 1, "Pending empty-deck draw retry failed");
+    }
+    private static void CheckPolicyWait(SkillCardDefinition inert, TurnCheckPolicy policy)
+    {
+        int effects = 0; Begin(2, inert, null, null);
+        TurnCheckCard free = Card("NeedsPolicy", (manager, owner, trigger) => trigger == null, (manager, owner, trigger) => effects++);
+        int actor = game.CurrentPlayer; Give(actor, free); Play(actor, free);
+        Require(game.Phase == TurnPhase.WaitingForSpecification && effects == 0 && !game.CanEndTurn, "Undefined response policy was guessed");
+        game.FlowPolicy = policy; game.RetryPendingSpecification();
+        Require(effects == 1 && game.Phase == TurnPhase.PlayerInput && !game.ActionConsumed, "Policy did not resume card once");
+        game.RetryPendingSpecification(); Require(effects == 1, "Retry replayed completed card");
+    }
+    private static void CheckInterruptedAction(SkillCardDefinition inert)
+    {
+        TurnCheckPolicy policy = Fixture<TurnCheckPolicy>("TwoParticipants"); Begin(3, inert, null, policy);
+        int actor = game.CurrentPlayer, opponent = (actor + 1) % 3, outsider = (actor + 2) % 3;
+        policy.PlanChains = true; policy.A = actor; policy.B = opponent; policy.First = opponent; var log = new List<string>();
+        TurnCheckCard cancel = Card("CancelAction", (manager, owner, trigger) => Root(trigger)?.Kind == TurnEventKind.NormalAction, (manager, owner, trigger) => { log.Add("cancel"); Root(trigger).Cancelled = true; }); cancel.Target = actor;
+        TurnCheckCard reply = Card("Reply", (manager, owner, trigger) => Root(trigger)?.Kind == TurnEventKind.NormalAction, (manager, owner, trigger) => log.Add("reply")); reply.Target = opponent;
+        Give(opponent, cancel); Give(actor, reply); game.SelectPlacePrisoner(); game.OnCellClicked(Vector2Int.zero);
+        Require(game.Phase == TurnPhase.Response && game.Responder == opponent && game.ActionDeclared && !game.ActionConsumed, "Action did not open externally ordered responses");
+        Require(game.OnBoardCount(actor) == 0 && game.InputPlayer != outsider && !game.CanEndTurn, "Unresolved action changed board/admitted third player");
+        Require(Hud<Button>("responsePass").interactable && Hud<GameObject>("handPanel").activeSelf, "Chain HUD unavailable");
+        Play(opponent, cancel); Require(game.Responder == actor, "Response did not alternate"); Play(actor, reply); Require(game.Responder == opponent, "Reply did not alternate");
+        game.PassResponse(); Require(game.Phase == TurnPhase.Response, "One pass closed chain"); game.PassResponse();
+        Require(log.SequenceEqual(new[] { "reply", "cancel" }), "Integrated responses not LIFO");
+        Require(game.ActionConsumed && game.Phase == TurnPhase.PlayerInput && game.OnBoardCount(actor) == 0, "Cancelled action was not consumed");
+        game.SelectPlacePrisoner(); game.OnCellClicked(Vector2Int.zero); Require(game.OnBoardCount(actor) == 0 && game.CanEndTurn, "Cancelled action allowed retry");
+        int freeEffects = 0; TurnCheckCard free = Card("AfterAction", (manager, owner, trigger) => trigger == null, (manager, owner, trigger) => freeEffects++);
+        policy.PlanChains = false; Give(actor, free); Play(actor, free);
+        Require(freeEffects == 1 && game.ActionConsumed && game.Phase == TurnPhase.PlayerInput, "Card after normal action failed");
+    }
+    private static void CheckActivationCancellation(SkillCardDefinition inert)
+    {
+        TurnCheckPolicy policy = Fixture<TurnCheckPolicy>("ActivationCancellation"); Begin(2, inert, null, policy);
+        int actor = game.CurrentPlayer, opponent = 1 - actor, initialEffects = 0;
+        TurnCheckCard initial = Card("InitialSkill", (manager, owner, trigger) => trigger == null, (manager, owner, trigger) => initialEffects++); initial.Target = opponent;
+        TurnCheckCard cancel = Card("CancelInitialSkill", (manager, owner, trigger) => trigger?.Kind == TurnEventKind.SkillActivation,
+            (manager, owner, trigger) => trigger.Parent.Cancelled = true); cancel.Target = actor;
+        Give(actor, initial); Give(opponent, cancel);
+        policy.PlanChains = true; policy.A = actor; policy.B = opponent; policy.First = opponent;
+        Play(actor, initial); Play(opponent, cancel); game.PassResponse(); game.PassResponse();
+        Require(initialEffects == 0 && game.Cards.Used.Contains(initial) && game.Cards.Used.Contains(cancel), "Cancelled initial skill still resolved or was not discarded");
+        Require(game.Phase == TurnPhase.PlayerInput && !game.ActionConsumed, "Cancelled skill changed normal action state");
 
-        RestartWithDeployedPieces();
-        // Fixture: shelter the entire winning route and the stationary P2/P3 prisoners.
-        for (int x = 0; x < game.Grid.GetRowLength(0); x++) game.Grid.PlaceFence(new Vector2Int(x, 0));
-        game.Grid.PlaceFence(new Vector2Int(0, 1)); game.Grid.PlaceFence(new Vector2Int(0, 2));
-        for (int piece = 0; piece < 3; piece++)
-        for (int step = 0; step < game.Grid.GetRowLength(0); step++)
+        Begin(2, inert, null, policy); actor = game.CurrentPlayer; opponent = 1 - actor;
+        int cancelEffects = 0, counterEffects = 0;
+        cancel = Card("ActionInterference", (manager, owner, trigger) => Root(trigger)?.Kind == TurnEventKind.NormalAction,
+            (manager, owner, trigger) => { cancelEffects++; trigger.Parent.Cancelled = true; }); cancel.Target = actor;
+        TurnCheckCard counter = Card("CancelInterference", (manager, owner, trigger) => Root(trigger)?.Kind == TurnEventKind.NormalAction,
+            (manager, owner, trigger) => { counterEffects++; trigger.Parent.Cancelled = true; }); counter.Target = opponent;
+        Give(opponent, cancel); Give(actor, counter); policy.A = actor; policy.B = opponent; policy.First = opponent;
+        game.SelectPlacePrisoner(); game.OnCellClicked(Vector2Int.zero); Play(opponent, cancel); Play(actor, counter); game.PassResponse(); game.PassResponse();
+        Require(counterEffects == 1 && cancelEffects == 0, "Counter did not cancel the interference activation");
+        Require(game.OnBoardCount(actor) == 1 && game.ActionConsumed && game.Phase == TurnPhase.PlayerInput, "Cancelled interference still prevented original action");
+    }
+    private static void CheckUnresolvedEffects(SkillCardDefinition inert)
+    {
+        for (int mode = 0; mode < 2; mode++)
         {
-            Require(game.State == GameState.Player1Turn, "Expected P1 turn");
-            game.OnPrisonerClicked(P(piece)); game.MoveRightOrEscape();
-            if (piece == 2 && step == game.Grid.GetRowLength(0) - 1) break;
-            game.ConfirmHandoff(); ToggleSpareFence(); game.ConfirmHandoff(); ToggleSpareFence();
-            deadline = EditorApplication.timeSinceStartup + 5;
-            while (game.State == GameState.GuardTurn && EditorApplication.timeSinceStartup < deadline) yield return null;
-            Require(game.State == GameState.Handoff, "Guard did not hand off to P1"); game.ConfirmHandoff();
+            TurnCheckPolicy policy = Fixture<TurnCheckPolicy>("UnresolvedEffect_" + mode); Begin(2, inert, null, policy);
+            int actor = game.CurrentPlayer, opponent = 1 - actor;
+            int initialEffects = 0, olderEffects = 0, drawEffects = 0, nestedEffects = 0;
+            TurnCheckCard initial = Card("PendingInitial", (manager, owner, trigger) => trigger == null, (manager, owner, trigger) => initialEffects++); initial.Target = opponent;
+            TurnCheckCard older = Card("PendingEarlierResponse", (manager, owner, trigger) => trigger != null, (manager, owner, trigger) => olderEffects++); older.Target = actor;
+            TurnCheckCard drawing = Card("DrawDuringResolution", (manager, owner, trigger) => trigger != null,
+                (manager, owner, trigger) => { drawEffects++; manager.DrawSkillCard(owner); }); drawing.Target = opponent;
+            Give(actor, initial); Give(opponent, older); Give(actor, drawing);
+            TurnCheckCard nested = Card("NestedImmediate", (manager, owner, trigger) => true, (manager, owner, trigger) => nestedEffects++); nested.ForceImmediate = true;
+            game.Cards.Reset(mode == 0 ? Array.Empty<SkillCardDefinition>() : new SkillCardDefinition[] { nested }, upper => upper - 1);
+            policy.PlanChains = true; policy.A = actor; policy.B = opponent; policy.First = opponent;
+            Play(actor, initial); Play(opponent, older); Play(actor, drawing); game.PassResponse(); game.PassResponse();
+            Require(drawEffects == 1 && game.Phase == TurnPhase.WaitingForSpecification && initialEffects == 0 && olderEffects == 0 && nestedEffects == 0,
+                mode == 0 ? "Empty draw inside an effect allowed remaining responses to resolve" : "Nested immediate priority was guessed and remaining responses resolved");
+            Require(!game.CanEndTurn && !game.ActionConsumed && game.Cards.Used.Contains(drawing) && !game.Cards.Used.Contains(older), "Unresolved effect did not preserve the unfinished chain");
+            game.RetryPendingSpecification();
+            Require(game.Phase == TurnPhase.WaitingForSpecification && drawEffects == 1 && initialEffects == 0 && olderEffects == 0, "Retry replayed an unresolved effect without a defined continuation");
+            game.RestartGame();
+            Require(game.Phase == TurnPhase.PlayerInput && game.Prisoners.All(piece => piece.IsInReserve), "Restart did not remove unresolved effect state");
         }
-        Require(game.State == GameState.Result && game.EscapedCount(0) == 3 && game.ResultMessage.Contains("P1"), "Three-prisoner victory failed");
-        game.RestartGame(); yield return null;
-        Require(game.State == GameState.Player1Turn && game.Grid.FenceCount == 5 && game.EscapedCount(0) == 0 && game.Prisoners.All(p => p.IsInReserve && !p.IsOnBoard), "Retry did not reset game");
-        Require(game.GetComponentsInChildren<Prisoner>(true).Length == 9, "Retry leaked prisoners");
+    }
+    private static void CheckActionOverflow(SkillCardDefinition inert)
+    {
+        for (int restart = 0; restart < 2; restart++)
+        {
+            TurnCheckPolicy policy = Fixture<TurnCheckPolicy>("ActionOverflow_" + restart); Begin(2, inert, null, policy);
+            int actor = game.CurrentPlayer, opponent = 1 - actor, effects = 0;
+            for (int index = 0; index < 4; index++) Give(actor, inert);
+            TurnCheckCard drawing = Card("OverflowBeforeAction", (manager, owner, trigger) => Root(trigger)?.Kind == TurnEventKind.NormalAction,
+                (manager, owner, trigger) => { effects++; manager.DrawSkillCard(actor); manager.DrawSkillCard(actor); }); drawing.Target = actor;
+            Give(opponent, drawing); game.Cards.Reset(Deck(inert, 2), upper => upper - 1);
+            policy.PlanChains = true; policy.A = actor; policy.B = opponent; policy.First = opponent;
+            game.SelectPlacePrisoner(); game.OnCellClicked(Vector2Int.zero); Play(opponent, drawing); game.PassResponse(); game.PassResponse();
+            Require(effects == 1 && game.Hand(actor).Count == 7 && game.Phase == TurnPhase.ChooseDiscard && game.OnBoardCount(actor) == 0 && !game.ActionConsumed, "Overflow did not suspend original action completion");
+            if (restart == 0)
+            {
+                game.DiscardOverflow(actor, 0); Require(game.Phase == TurnPhase.ChooseDiscard && game.Hand(actor).Count == 6 && game.OnBoardCount(actor) == 0, "Original action resumed before all excess cards were discarded");
+                game.DiscardOverflow(actor, 0);
+                Require(game.Phase == TurnPhase.PlayerInput && game.Hand(actor).Count == 5 && game.ActionConsumed && game.OnBoardCount(actor) == 1 && effects == 1, "Original action did not resume exactly once after overflow");
+                game.DiscardOverflow(actor, 0); game.OnCellClicked(Vector2Int.zero);
+                Require(game.OnBoardCount(actor) == 1 && effects == 1, "Completed overflow action could be replayed");
+            }
+            else
+            {
+                game.RestartGame(); game.DiscardOverflow(actor, 0); game.RetryPendingSpecification();
+                Require(game.Phase == TurnPhase.PlayerInput && !game.ActionConsumed && game.Prisoners.All(piece => piece.IsInReserve) && effects == 1, "Restart retained the pending action completion");
+            }
+        }
+    }
+    private static IEnumerator CheckMonitoring(SkillCardDefinition inert)
+    {
+        TurnCheckPolicy policy = Fixture<TurnCheckPolicy>("GuardOrder"); policy.AllowGuardOrder = false;
+        TurnCheckMonitoring watch = Fixture<TurnCheckMonitoring>("Watching"); watch.Card = PatrolCard.WatchAllCells;
+        game.Configure(2, Deck(inert), null, policy); game.Guard.MonitoringSource = watch; game.InitializeGame(); int rescues = 0;
+        TurnCheckCard rescue = Card("Rescue", (manager, owner, trigger) => Root(trigger)?.Kind == TurnEventKind.GuardCapture, (manager, owner, trigger) =>
+        {
+            TurnEvent capture = Root(trigger); Require(capture.Kind == TurnEventKind.GuardCapture && capture.CaptureTargets.All(piece => piece.Owner == owner), "Guard response mixed target owners"); capture.Cancelled = true; rescues++;
+        });
+        Give(0, rescue); game.Cards.Reset(Deck(inert), upper => upper - 1); game.StartFirstTurn();
+        for (int turn = 0; turn < 2; turn++) { game.SelectPlacePrisoner(); game.OnCellClicked(Vector2Int.zero); game.EndTurn(); if (turn == 0) game.ConfirmHandoff(); }
+        yield return Until(() => game.Phase == TurnPhase.WaitingForSpecification, "Multiple guard owners did not wait for response order");
+        Require(watch.Draws == 1 && watch.History.Single() == PatrolCard.WatchAllCells && Piece(0).IsOnBoard && Piece(1).IsOnBoard, "Monitoring redrawn/captured before ordering");
+        game.Grid.PlaceFence(Vector2Int.zero); policy.AllowGuardOrder = true; game.RetryPendingSpecification();
+        yield return Until(() => game.Phase == TurnPhase.GuardResponse || game.Phase == TurnPhase.Response, "Explicit guard order did not open rescue window");
+        Require(game.InputPlayer == 0 && rescues == 0 && Piece(0).IsOnBoard, "Rescue window offered at wrong time"); Play(0, rescue);
+        double deadline = EditorApplication.timeSinceStartup + 8;
+        while (game.Round == 1 && EditorApplication.timeSinceStartup < deadline) { if (game.Phase == TurnPhase.GuardResponse || game.Phase == TurnPhase.Response) game.PassResponse(); yield return null; }
+        Require(game.Round == 2 && rescues == 1 && !Piece(0).Captured && Piece(1).Captured, "Per-owner rescue/capture outcomes not separated");
+        Require(watch.Draws == 1, "Guard retry/rescue redrew monitoring card");
+    }
+    private static void CheckVictory(SkillCardDefinition inert)
+    {
+        TurnCheckPolicy policy = Fixture<TurnCheckPolicy>("EscapeResponse"); Begin(2, inert, null, policy);
+        int owner = game.CurrentPlayer, opponent = 1 - owner;
+        for (int index = 0; index < 2; index++) { Prisoner piece = Piece(owner, index); piece.Deploy(new Vector2Int(2, 0)); game.ConfirmEscape(piece); }
+        Require(game.EscapedCount(owner) == 2 && game.Winner == -1, "Confirmed escape count before victory failed"); game.ConfirmEscape(Piece(owner)); Require(game.EscapedCount(owner) == 2, "Duplicate escape counted twice");
+        Prisoner last = Piece(owner, 2); last.Deploy(new Vector2Int(2, 0));
+        TurnCheckCard response = Card("BeforeEscape", (manager, actor, trigger) => Root(trigger)?.Kind == TurnEventKind.NormalAction); response.Target = owner; Give(opponent, response);
+        policy.PlanChains = true; policy.A = owner; policy.B = opponent; policy.First = opponent;
+        game.SelectMove(); game.OnPrisonerClicked(last); game.MoveRightOrEscape();
+        Require(game.Phase == TurnPhase.Response && game.Winner == -1 && game.EscapedCount(owner) == 2 && last.IsOnBoard, "Victory committed before chain close"); game.PassResponse(); game.PassResponse();
+        Require(game.Phase == TurnPhase.Finished && game.Winner == owner && game.EscapedCount(owner) == 3 && last.Escaped, "Third escape did not immediately finish game");
+        Require(Hud<GameObject>("result").activeSelf && game.ResultMessage.Contains("P" + (owner + 1)), "Winner HUD not connected");
+        int round = game.Round, actorBefore = game.CurrentPlayer, beforeBoard = game.OnBoardCount(opponent);
+        game.EndTurn(); game.ConfirmHandoff(); game.PassResponse(); game.SelectPlacePrisoner(); game.OnCellClicked(Vector2Int.zero);
+        Require(game.Phase == TurnPhase.Finished && game.Round == round && game.CurrentPlayer == actorBefore && game.OnBoardCount(opponent) == beforeBoard, "Finished game accepted progression/input");
+        game.RestartGame(); Require(game.Winner == -1 && game.Round == 1 && game.EscapedCount(owner) == 0 && game.Prisoners.All(piece => piece.IsInReserve), "Restart did not clear result");
     }
 }

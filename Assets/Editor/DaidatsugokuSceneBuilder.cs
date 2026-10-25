@@ -17,6 +17,10 @@ public static class DaidatsugokuSceneBuilder
         if (active.isDirty) throw new System.InvalidOperationException("Save the current scene before creating the prototype.");
         var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
         GameObject root = new("Daidatsugoku"); root.AddComponent<GameManager>();
+        // An explicit scene reference prevents the runtime-created board shader from being stripped.
+        var gridSettings = new SerializedObject(root.GetComponent<GridManager>());
+        gridSettings.FindProperty("boardShader").objectReferenceValue = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+        gridSettings.ApplyModifiedPropertiesWithoutUndo();
         Camera camera = Camera.main;
         camera.transform.position = new Vector3(0, 12, 4f); camera.transform.rotation = Quaternion.Euler(90, 0, 0);
         camera.orthographic = true; camera.orthographicSize = 5.5f;

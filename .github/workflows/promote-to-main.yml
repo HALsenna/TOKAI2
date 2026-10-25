@@ -24,12 +24,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    outputs:
-      promotion_pr: ${{ steps.promotion.outputs.promotion_pr }}
     steps:
       # No checkout: merged project code is never executed with this token.
       - name: Create main PR from the merged snapshot
-        id: promotion
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0 (Node.js 24)
         env:
           SOURCE_PR: ${{ github.event.pull_request.number || inputs.source_pr }}
@@ -52,9 +49,6 @@ jobs:
               owner, repo, state: 'all', base: 'main', head: `${owner}:${branch}`, per_page: 100
             });
             if (existing.length) {
-              if (existing[0].state === 'open') {
-                core.setOutput('promotion_pr', String(existing[0].number));
-              }
               core.notice(`Promotion PR already exists: ${existing[0].html_url}`);
               await core.summary.addLink('Existing promotion PR', existing[0].html_url).write();
               return;
@@ -101,13 +95,5 @@ jobs:
               title: `[main] ${source.title}`.slice(0, 256), body
             });
             core.notice(`Created promotion PR: ${promoted.html_url}`);
-            core.setOutput('promotion_pr', String(promoted.number));
             await core.summary.addLink('Source PR', source.html_url)
               .addBreak().addLink('Promotion PR (human merge required)', promoted.html_url).write();
-
-  request-review:
-    needs: promote
-    if: needs.promote.outputs.promotion_pr != ''
-    uses: ./.github/workflows/request-codex-review.yml
-    with:
-      pr_number: ${{ needs.promote.outputs.promotion_pr }}

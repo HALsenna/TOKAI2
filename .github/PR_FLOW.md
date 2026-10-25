@@ -24,11 +24,10 @@ For a failed promotion, rerun the failed Actions jobs. Once the promotion workfl
 
 Existing open PRs are not automatically retargeted by changing the default branch. Retarget them to `plan-main` when continuing their work.
 
-## Codex review for main PRs
+## Standard Codex review
 
-- Connect `HALsenna/TOKAI2` to ChatGPT Codex Connector and enable code review for this repository. Keep the review target on **Follow personal preferences** with personal automatic review off: the workflows request reviews explicitly, only for `main`.
-- The promotion workflow calls `request-codex-review.yml` directly after creating or finding an open promotion PR. This also works for PRs created by `GITHUB_TOKEN`.
-- The review workflow posts `@codex review` once per PR head commit. Retries reuse the request marker. Draft and closed PRs, and PRs targeting `plan-main`, are skipped. Mark a draft ready to request its review.
-- After a human merges this workflow into `main`, its `pull_request_target` trigger also covers other main PRs and new pushes. The GitHub Actions event policy must permit this event. Before that merge, automatic requests are available through the promotion workflow only.
-- The request job succeeds when it posts the request; review completion and findings appear separately in the PR. Check the Codex bot's review summary, including quota or connection errors. A missing marker comment can be retried by rerunning the jobs; for a failed Codex review after a request was posted, add `@codex review` manually.
-- Codex uses the connected ChatGPT account's code-review entitlement. This setup adds no OpenAI API key or paid-usage opt-in. It never approves or merges PRs, and main's existing protection rules remain in effect.
+- Connect `HALsenna/TOKAI2` to ChatGPT Codex Connector. In its repository code-review settings, enable automatic review, choose **All pull requests**, and trigger reviews when a PR is opened. This includes both `plan-main` and `main` PRs. Do not enable automatic review globally for unrelated repositories.
+- The managed Codex integration handles review requests. There is no custom review-request workflow, no `CODEX_REVIEW_TOKEN`, and no OpenAI API key. Comments from `github-actions[bot]` using `GITHUB_TOKEN` did not start Codex reviews during verification; use the managed integration instead.
+- Existing PRs are not necessarily reviewed retroactively when this setting changes. To request an existing PR's review or retry one, a connected human account can comment `@codex review`.
+- Review activity and completion appear in the Codex bot's PR summary. A successful promotion job means the PR was created, not that its review completed. Check quota or connection errors there.
+- Codex uses the connected ChatGPT account's code-review entitlement. No paid-usage opt-in is added. Reviews do not replace tests or human review; no automatic approval or merge is configured, and main's protection rules remain in effect.

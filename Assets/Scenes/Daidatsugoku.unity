@@ -278,7 +278,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 06d0e03ed75baaf40ad7372be3d65932, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Daidatsugoku.GameManager
+  playerCount: 3
   guardRevealSeconds: 1.2
+  skillCards: []
+  actionRules: {fileID: 0}
+  flowPolicy: {fileID: 0}
 --- !u!114 &1440450519
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -303,6 +307,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c178e5715accbff4092ec1efba6f14ce, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Daidatsugoku.GuardSystem
+  monitoringSource: {fileID: 0}
 --- !u!114 &1440450521
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -315,6 +320,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 34315fc21f7d4124da9606703fc1dc1e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Daidatsugoku.GridManager
+  boardShader: {fileID: 4800000, guid: 933532a4fcc9baf4fa0491de14d08ed7, type: 3}
 --- !u!4 &1440450522
 Transform:
   m_ObjectHideFlags: 0

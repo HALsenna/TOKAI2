@@ -3,9 +3,9 @@ using UnityEngine;
 namespace Daidatsugoku
 {
     /// <summary>
-    /// Supplies monitoring cards and owns their generation, draw rules and history.
-    /// A concrete source must follow SYS-GUARD-001 v1.1; the game flow does not
-    /// choose a monitoring probability or substitute the legacy prototype deck.
+    /// Optional source override for explicit test fixtures or future integrations.
+    /// When absent, GuardSystem uses the SYS-GUARD-001 v1.2 thirty-card deck.
+    /// GuardSystem records public history and prevents duplicate round consumption.
     /// </summary>
     public abstract class GuardCardSource : ScriptableObject
     {

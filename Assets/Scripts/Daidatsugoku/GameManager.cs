@@ -59,7 +59,8 @@ namespace Daidatsugoku
         private PrototypeActionQuery boardRules;
         private Prisoner selected;
         private int turnIndex;
-        private bool resolving, beginningTurn, autoPassScheduled;
+        private bool resolving, beginningTurn, autoPassScheduled, guardTurnStarted;
+        private bool HistoryInputBlocked => GetComponent<GameHud>().IsHistoryOpen;
         private Operation operation;
         private ResponseChain<CardActivation> responses;
         private TurnEvent responseTrigger, guardEvent;
@@ -107,7 +108,7 @@ namespace Daidatsugoku
         {
             StopAllCoroutines(); ClearSelection();
             State = GameState.Setup; Phase = TurnPhase.Setup; Round = 1; Winner = -1;
-            Message = ResultMessage = ""; ActionConsumed = ActionDeclared = resolving = beginningTurn = autoPassScheduled = false;
+            Message = ResultMessage = ""; ActionConsumed = ActionDeclared = resolving = beginningTurn = autoPassScheduled = guardTurnStarted = false;
             unresolvedDraw = null;
             operation = null; responses = null; responseTrigger = guardEvent = null; blockedRetry = afterDiscard = null;
             OverflowPlayer = -1; prisoners.Clear(); order.Clear(); confirmedEscapes.Clear(); deferredImmediate.Clear(); guardTargets.Clear(); guardOwners.Clear();
@@ -123,7 +124,7 @@ namespace Daidatsugoku
                 for (int i = 0; i < 3; i++) prisoners.Add(Grid.CreatePrisoner(p, new Vector2Int(0, p), Colors[p]));
             Grid.RefreshPiecePositions(prisoners); turnIndex = 0; CurrentPlayer = order[0]; Notify();
         }
-        public void RestartGame() { InitializeGame(); StartFirstTurn(); }
+        public void RestartGame() { if (HistoryInputBlocked) return; InitializeGame(); StartFirstTurn(); }
         public void StartFirstTurn() { if (State == GameState.Setup) BeginTurn(order[0]); }
         private void BeginTurn(int player)
         {
@@ -192,12 +193,12 @@ namespace Daidatsugoku
         public void SelectRemoveFence() => SelectAction(PlayerAction.RemoveFence);
         private void SelectAction(PlayerAction action)
         {
-            if (!CanPerform(action)) return;
+            if (HistoryInputBlocked || !CanPerform(action)) return;
             ClearSelection(); Action = action; Say(action == PlayerAction.Move ? "自分の囚人を選択してください。" : "対象のマスまたは柵を選択してください。");
         }
         public void OnPrisonerClicked(Prisoner prisoner)
         {
-            if (!CanOperate || prisoner == null || !prisoners.Contains(prisoner) || !prisoner.IsOnBoard) return;
+            if (HistoryInputBlocked || !CanOperate || prisoner == null || !prisoners.Contains(prisoner) || !prisoner.IsOnBoard) return;
             if (Action != PlayerAction.Move) { OnCellClicked(prisoner.Cell); return; }
             if (selected != null && CanMove(selected, prisoner.Cell)) { MoveSelected(prisoner.Cell); return; }
             if (prisoner.Owner != CurrentPlayer) return;
@@ -206,7 +207,7 @@ namespace Daidatsugoku
         public void OnCellClicked(Vector2Int cell) { if (Grid.IsInside(cell)) OnCellClicked(cell, Grid.BoundaryOf(cell, CellEdge.North)); }
         public void OnCellClicked(Vector2Int cell, FenceBoundary boundary)
         {
-            if (!CanOperate || !Grid.IsInside(cell)) return;
+            if (HistoryInputBlocked || !CanOperate || !Grid.IsInside(cell)) return;
             if (Action == PlayerAction.PlacePrisoner && CanDeploy(cell))
             {
                 var piece = prisoners.Find(p => p.Owner == CurrentPlayer && p.IsInReserve); if (piece == null) return;
@@ -217,7 +218,7 @@ namespace Daidatsugoku
         }
         public void OnBoundaryClicked(FenceBoundary boundary)
         {
-            if (!CanOperate || (Action != PlayerAction.PlaceFence && Action != PlayerAction.RemoveFence)) return;
+            if (HistoryInputBlocked || !CanOperate || (Action != PlayerAction.PlaceFence && Action != PlayerAction.RemoveFence)) return;
             bool place = Action == PlayerAction.PlaceFence; if (!CanFence(boundary, place)) return;
             Declare(new TurnEvent(TurnEventKind.NormalAction, CurrentPlayer, action: Action, boundary: boundary), () => { if (CanFence(boundary, place)) { if (place) Grid.PlaceFence(boundary); else Grid.RemoveFence(boundary); } });
         }
@@ -229,7 +230,7 @@ namespace Daidatsugoku
         }
         public void MoveRightOrEscape()
         {
-            if (!CanOperate || Action != PlayerAction.Move || selected == null) return;
+            if (HistoryInputBlocked || !CanOperate || Action != PlayerAction.Move || selected == null) return;
             if (!Grid.IsExitCell(selected.Cell)) { MoveSelected(selected.Cell + Vector2Int.right); return; }
             if (!CanEscape(selected)) return;
             Prisoner piece = selected;
@@ -259,7 +260,7 @@ namespace Daidatsugoku
         }
         public bool UseCard(int owner, int index)
         {
-            if (!CanUseCard(owner, index)) return false;
+            if (HistoryInputBlocked || !CanUseCard(owner, index)) return false;
             var card = hands[owner][index];
             if (IsChainOpen)
             {
@@ -310,6 +311,7 @@ namespace Daidatsugoku
         }
         public void PassResponse()
         {
+            if (HistoryInputBlocked) return;
             if (IsChainOpen)
             {
                 if (!responses.TryPass(Responder)) return;
@@ -378,7 +380,7 @@ namespace Daidatsugoku
         }
         public bool DiscardOverflow(int owner, int index)
         {
-            if (Phase != TurnPhase.ChooseDiscard || owner != OverflowPlayer || index < 0 || index >= hands[owner].Count) return false;
+            if (HistoryInputBlocked || Phase != TurnPhase.ChooseDiscard || owner != OverflowPlayer || index < 0 || index >= hands[owner].Count) return false;
             var complete = afterDiscard; Cards.Discard(hands[owner][index]); hands[owner].RemoveAt(index);
             OverflowPlayer = -1; FinishEffects(complete); return true;
         }
@@ -398,7 +400,7 @@ namespace Daidatsugoku
             Say(ActionConsumed ? "通常行動は消費済みです。カード使用またはターン終了を選べます。" : "通常行動を1回実行してください。カードも使用できます。");
         }
         private IEnumerator AutoPass() { yield return null; autoPassScheduled = false; if (IsPlayerTurn && Phase == TurnPhase.Resolve) AdvanceTurn(true); }
-        public void EndTurn() { if (CanEndTurn) AdvanceTurn(false); }
+        public void EndTurn() { if (!HistoryInputBlocked && CanEndTurn) AdvanceTurn(false); }
         private void AdvanceTurn(bool automatic)
         {
             ClearSelection(); turnIndex++;
@@ -406,11 +408,13 @@ namespace Daidatsugoku
             else { State = GameState.GuardTurn; Phase = TurnPhase.GuardReveal; Notify(); BeginGuardTurn(); }
         }
         private void RequestHandoff(int player) { PendingPlayer = player; State = GameState.Handoff; Phase = TurnPhase.Handoff; Notify(); }
-        public void ConfirmHandoff() { if (State == GameState.Handoff) BeginTurn(PendingPlayer); }
+        public void ConfirmHandoff() { if (!HistoryInputBlocked && State == GameState.Handoff) BeginTurn(PendingPlayer); }
 
         private void BeginGuardTurn()
         {
+            if (State != GameState.GuardTurn || guardTurnStarted) return;
             if (!Guard.TryDrawMonitoring(Round, out var card, out var reason)) { WaitForSpecification(reason, BeginGuardTurn); return; }
+            guardTurnStarted = true;
             guardTargets.Clear(); guardOwners.Clear();
             foreach (var piece in Guard.FindTargets(card, Grid, Prisoners))
             {
@@ -419,9 +423,10 @@ namespace Daidatsugoku
             }
             Phase = TurnPhase.GuardReveal; Say($"監視結果：{Guard.GetCardName(card)}"); StartCoroutine(RevealGuard());
         }
-        private IEnumerator RevealGuard() { yield return new WaitForSecondsRealtime(guardRevealSeconds); if (State != GameState.Result) PlanGuardOwners(); }
+        private IEnumerator RevealGuard() { yield return new WaitForSecondsRealtime(guardRevealSeconds); if (State == GameState.GuardTurn) PlanGuardOwners(); }
         private void PlanGuardOwners()
         {
+            if (State != GameState.GuardTurn) return;
             if (guardTargets.Count == 0) { FinishGuardTurn(); return; }
             var owners = new List<int>(guardTargets.Keys); int[] ordered;
             if (owners.Count == 1) ordered = new[] { owners[0] };
@@ -451,13 +456,15 @@ namespace Daidatsugoku
         private void CompleteGuardResponse()
         {
             if (guardEvent == null) return;
-            if (!guardEvent.Cancelled) foreach (var piece in guardEvent.CaptureTargets) if (piece.IsOnBoard) piece.Capture();
-            guardEvent = null; Grid.RefreshPiecePositions(prisoners); if (!CheckVictory()) NextGuardOwner();
+            var completed = guardEvent; guardEvent = null;
+            if (!completed.Cancelled) Guard.ApplyMonitoringFailure(completed.CaptureTargets);
+            Grid.RefreshPiecePositions(prisoners); if (!CheckVictory()) NextGuardOwner();
         }
         private void FinishGuardTurn()
         {
+            if (State != GameState.GuardTurn) return;
             guardEvent = null; if (CheckVictory()) return;
-            Round++; turnIndex = 0; RequestHandoff(order[0]);
+            guardTurnStarted = false; Round++; turnIndex = 0; RequestHandoff(order[0]);
         }
         public void ConfirmEscape(Prisoner piece)
         {
@@ -487,7 +494,7 @@ namespace Daidatsugoku
         private void WaitForSpecification(string reason, System.Action retry) { Phase = TurnPhase.WaitingForSpecification; blockedRetry = retry; Say(reason); }
         public void RetryPendingSpecification()
         {
-            if (Phase != TurnPhase.WaitingForSpecification || blockedRetry == null) return;
+            if (HistoryInputBlocked || Phase != TurnPhase.WaitingForSpecification || blockedRetry == null) return;
             var retry = blockedRetry; blockedRetry = null; retry();
         }
         private void ClearSelection() { if (selected != null) selected.SetSelected(false); selected = null; }

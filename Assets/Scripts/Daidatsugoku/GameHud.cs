@@ -15,6 +15,8 @@ namespace Daidatsugoku
         private static readonly Color Accent = new(.20f, .43f, .43f);
         private GameManager game;
         private Font font;
+        private GuardHistoryOverlay historyOverlay;
+        public bool IsHistoryOpen => historyOverlay != null && historyOverlay.IsOpen;
         private const int CardsPerPage = 5;
         private Text turn, score, message, mode, handoffText, resultText, handTitle, handHint, pageText, waitingText;
         private GameObject actions, handoff, result, handPanel, waiting;
@@ -79,6 +81,9 @@ namespace Daidatsugoku
                 events.transform.SetParent(transform, false);
                 events.GetComponent<InputSystemUIInputModule>().AssignDefaultActions();
             }
+            GameObject historyObject = new("GuardHistoryRoot", typeof(RectTransform), typeof(GuardHistoryOverlay));
+            historyOverlay = historyObject.GetComponent<GuardHistoryOverlay>();
+            historyOverlay.Initialize(canvasObject.transform, game.Guard, font);
             game.Changed += Refresh;
             Refresh();
         }
@@ -141,6 +146,7 @@ namespace Daidatsugoku
             handoffText.text = $"次のプレイヤー P{game.PendingPlayer + 1} へ\n交代してください。\n準備ができたら開始ボタンを押します。";
             result.SetActive(game.State == GameState.Result);
             resultText.text = game.ResultMessage;
+            historyOverlay.Refresh();
         }
 
         private bool ForcedHand => game.OverflowPlayer >= 0 || game.Phase == TurnPhase.Response || game.Phase == TurnPhase.GuardResponse;

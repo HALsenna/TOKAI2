@@ -7,34 +7,62 @@ namespace Daidatsugoku
 
     public sealed class GuardSystem : MonoBehaviour
     {
-        private readonly Queue<PatrolCard> deck = new();
+        private readonly List<GuardHistoryEntry> history = new();
+        private readonly Dictionary<int, PatrolCard> revealedRounds = new();
+        private GuardMonitoringDeck deck;
+        private GuardCardSource sessionSource;
+        private bool sourceLocked;
+        private int lastRound;
         [SerializeField] private GuardCardSource monitoringSource;
+        // Only already revealed results cross the public/UI boundary.
+        public IReadOnlyList<GuardHistoryEntry> PublicHistory => history.AsReadOnly();
+        public IGuardVisionService VisionService { get; set; } = new PrototypeGuardVisionService();
+        public IGuardPrisonerService PrisonerService { get; set; } = new PrototypeGuardPrisonerService();
         public GuardCardSource MonitoringSource
         {
             get => monitoringSource;
+            // After a successful draw, configuration changes apply on ResetDeck.
             set => monitoringSource = value;
         }
 
         public void ResetDeck()
         {
-            deck.Clear();
-            for (int i = 0; i < 8; i++) deck.Enqueue(PatrolCard.WatchAllCells);
+            history.Clear(); revealedRounds.Clear(); lastRound = 0; sourceLocked = false; sessionSource = null;
+            if (deck == null) deck = new GuardMonitoringDeck();
+            else deck.ResetSession();
             monitoringSource?.ResetSession();
-        }
-        public PatrolCard DrawCard()
-        {
-            if (deck.Count == 0) ResetDeck();
-            return deck.Dequeue();
         }
         public bool TryDrawMonitoring(int round, out PatrolCard card, out string reason)
         {
-            if (monitoringSource == null)
+            reason = null;
+            if (revealedRounds.TryGetValue(round, out card)) return true;
+            if (round < 1 || round <= lastRound)
             {
                 card = default;
-                reason = "SYS-GUARD-001 v1.1 に従う監視カード供給元が未設定です。";
+                reason = "監視ラウンドは1以上で、確定済みラウンドより後である必要があります。";
                 return false;
             }
-            return monitoringSource.TryDraw(round, out card, out reason);
+            var source = sourceLocked ? sessionSource : monitoringSource;
+            if (source != null)
+            {
+                if (!source.TryDraw(round, out card, out reason)) return false;
+            }
+            else
+            {
+                if (deck == null) deck = new GuardMonitoringDeck();
+                card = deck.Draw();
+            }
+            if (card != PatrolCard.WatchAllCells && card != PatrolCard.NotWatching)
+            {
+                reason = "監視カード供給元が不正なカード種別を返しました。";
+                return false;
+            }
+            int index = history.Count;
+            history.Add(new GuardHistoryEntry(index + 1, index / GuardMonitoringDeck.CardsPerDeck + 1,
+                index % GuardMonitoringDeck.CardsPerDeck + 1, card));
+            sessionSource = source; sourceLocked = true;
+            revealedRounds.Add(round, card); lastRound = round;
+            return true;
         }
 
         public string GetCardName(PatrolCard card) => card switch
@@ -51,7 +79,7 @@ namespace Daidatsugoku
             if (card != PatrolCard.WatchAllCells) throw new System.ArgumentOutOfRangeException(nameof(card));
             foreach (Prisoner prisoner in prisoners)
             {
-                if (!prisoner.IsOnBoard || grid.IsProtected(prisoner.Cell)) continue;
+                if (!prisoner.IsOnBoard || !VisionService.IsVisible(grid, prisoner)) continue;
                 targets.Add(prisoner);
             }
             return targets;
@@ -59,13 +87,16 @@ namespace Daidatsugoku
 
         public int Resolve(PatrolCard card, GridManager grid, IReadOnlyList<Prisoner> prisoners)
         {
-            if (card == PatrolCard.NotWatching) return 0;
-            if (card != PatrolCard.WatchAllCells) throw new System.ArgumentOutOfRangeException(nameof(card));
+            return ApplyMonitoringFailure(FindTargets(card, grid, prisoners));
+        }
+
+        public int ApplyMonitoringFailure(IReadOnlyList<Prisoner> targets)
+        {
             int captured = 0;
-            foreach (Prisoner prisoner in prisoners)
+            foreach (Prisoner prisoner in targets)
             {
-                if (!prisoner.IsOnBoard || grid.IsProtected(prisoner.Cell)) continue;
-                prisoner.Capture(); captured++;
+                if (!prisoner.IsOnBoard) continue;
+                PrisonerService.FailEscape(prisoner); captured++;
             }
             return captured;
         }

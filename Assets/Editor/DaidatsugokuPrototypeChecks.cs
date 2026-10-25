@@ -49,12 +49,15 @@ public sealed class TurnCheckPolicy : TurnFlowPolicy
 public sealed class TurnCheckMonitoring : GuardCardSource
 {
     public PatrolCard Card;
+    public bool Unavailable;
     public int Draws;
     public readonly List<PatrolCard> History = new();
     public override void ResetSession() { Draws = 0; History.Clear(); }
     public override bool TryDraw(int round, out PatrolCard card, out string reason)
     {
-        card = Card; reason = null; Draws++; History.Add(card); return true;
+        card = Card; reason = null;
+        if (Unavailable) { reason = "CHECK: monitoring source unavailable"; return false; }
+        Draws++; History.Add(card); return true;
     }
 }
 
@@ -96,7 +99,7 @@ public static class DaidatsugokuPrototypeChecks
                 if (current.Current is IEnumerator nested) { routines.Push(nested); continue; }
                 return;
             }
-            LastReport = $"PASS: {assertions} assertions; DEV-TURN-001 real-scene initialization, turns, cards, chains, monitoring, victory, board and HUD checks.";
+            LastReport = $"PASS: {assertions} assertions; DEV-TURN-001 and SYS-GUARD-001 v1.2 deck, history, integration, board and HUD checks.";
             Debug.Log(LastReport); Cleanup();
         }
         catch (Exception exception)
@@ -188,6 +191,8 @@ public static class DaidatsugokuPrototypeChecks
             CheckCards(inert, policy); CheckPolicyWait(inert, policy); CheckInterruptedAction(inert);
             CheckActivationCancellation(inert); CheckUnresolvedEffects(inert); CheckActionOverflow(inert);
             yield return CheckMonitoring(inert);
+            assertions += GuardDeckChecks.Run();
+            assertions += GuardSystemChecks.Run(game);
             CheckVictory(inert); yield return null;
         }
         finally { Restore(); }
@@ -295,7 +300,8 @@ public static class DaidatsugokuPrototypeChecks
         TurnCheckCard unlock = Card("EnableDeploy", (manager, owner, trigger) => trigger == null, (manager, owner, trigger) => { effects++; blocked.Deploy = true; });
         game.Configure(2, Deck(unlock), blocked, policy); game.InitializeGame(); game.StartFirstTurn(); game.UseCard(game.CurrentPlayer, 0);
         Require(effects == 1 && !game.ActionConsumed && game.Phase == TurnPhase.PlayerInput && !game.CanEndTurn, "Card did not restore action obligation");
-        blocked.Deploy = false; game.Configure(2, Deck(inert), blocked, policy); game.Guard.MonitoringSource = null; game.InitializeGame(); game.StartFirstTurn();
+        TurnCheckMonitoring unavailable = Fixture<TurnCheckMonitoring>("UnavailableMonitoring"); unavailable.Unavailable = true;
+        blocked.Deploy = false; game.Configure(2, Deck(inert), blocked, policy); game.Guard.MonitoringSource = unavailable; game.InitializeGame(); game.StartFirstTurn();
         yield return Until(() => game.Phase == TurnPhase.WaitingForSpecification, "Unplayable cards blocked automatic pass");
         Require(game.Round == 1 && game.Hand(0).Count == 1 && game.Hand(1).Count == 1 && game.Prisoners.All(piece => piece.IsInReserve), "Auto pass skipped draw/performed action");
         Require(!game.CanEndTurn && !Hud<Button>("endTurn").interactable, "Missing monitoring source did not lock flow");
@@ -452,6 +458,8 @@ public static class DaidatsugokuPrototypeChecks
         for (int turn = 0; turn < 2; turn++) { game.SelectPlacePrisoner(); game.OnCellClicked(Vector2Int.zero); game.EndTurn(); if (turn == 0) game.ConfirmHandoff(); }
         yield return Until(() => game.Phase == TurnPhase.WaitingForSpecification, "Multiple guard owners did not wait for response order");
         Require(watch.Draws == 1 && watch.History.Single() == PatrolCard.WatchAllCells && Piece(0).IsOnBoard && Piece(1).IsOnBoard, "Monitoring redrawn/captured before ordering");
+        typeof(GameManager).GetMethod("BeginGuardTurn", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(game, null);
+        Require(watch.Draws == 1 && game.Guard.PublicHistory.Count == 1, "Reentering a guard turn repeated draw/history publication");
         game.Grid.PlaceFence(Vector2Int.zero); policy.AllowGuardOrder = true; game.RetryPendingSpecification();
         yield return Until(() => game.Phase == TurnPhase.GuardResponse || game.Phase == TurnPhase.Response, "Explicit guard order did not open rescue window");
         Require(game.InputPlayer == 0 && rescues == 0 && Piece(0).IsOnBoard, "Rescue window offered at wrong time"); Play(0, rescue);

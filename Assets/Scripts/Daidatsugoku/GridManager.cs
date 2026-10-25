@@ -95,7 +95,7 @@ namespace Daidatsugoku
             for (int x = 0; x < GetRowLength(row); x++)
             {
                 Vector2Int cell = new(x, row);
-                Color color = (GlobalColumn(cell) + row) % 2 == 0 ? new Color(.28f, .34f, .42f) : new Color(.42f, .49f, .57f);
+                Color color = (GlobalColumn(cell) + row) % 2 == 0 ? new Color(.24f, .30f, .29f) : new Color(.33f, .39f, .36f);
                 GameObject tile = Primitive(PrimitiveType.Cube, CellName(cell), WorldPosition(cell), new Vector3(1.45f, .15f, 1.45f), color);
                 tile.AddComponent<GridCell>().Initialize(game, cell);
                 Label(CellName(cell), WorldPosition(cell) + new Vector3(-.5f, .09f, -.5f));
@@ -104,7 +104,7 @@ namespace Daidatsugoku
             for (int row = 0; row < RowCount; row++)
             {
                 Vector3 edge = WorldPosition(new Vector2Int(GetRowLength(row) - 1, row)) + new Vector3(.8f, .1f, 0);
-                GameObject goal = Primitive(PrimitiveType.Cube, $"EscapeGoal_{(char)('A' + row)}", edge, new Vector3(.1f, .1f, 1.45f), Color.green);
+                GameObject goal = Primitive(PrimitiveType.Cube, $"EscapeGoal_{(char)('A' + row)}", edge, new Vector3(.1f, .1f, 1.45f), new Color(.35f, .66f, .49f));
                 goal.GetComponent<Collider>().enabled = false;
             }
             Vector3 guardPosition = WorldPosition(new Vector2Int(1, 0)) + new Vector3(0, 0, Spacing);
@@ -129,7 +129,7 @@ namespace Daidatsugoku
             Vector3 position = transform.position + new Vector3((boundary.Column - 3) * Spacing, .3f, (RowCount - 1 - boundary.Line) * Spacing);
             position += boundary.Vertical ? new Vector3(-Spacing / 2, 0, 0) : new Vector3(0, 0, Spacing / 2);
             Vector3 scale = boundary.Vertical ? new Vector3(.12f, .45f, 1.45f) : new Vector3(1.45f, .45f, .12f);
-            GameObject fence = Primitive(PrimitiveType.Cube, $"Fence_{boundary}", position, scale, new Color(.95f, .16f, .19f));
+            GameObject fence = Primitive(PrimitiveType.Cube, $"Fence_{boundary}", position, scale, new Color(.78f, .32f, .31f));
             fence.AddComponent<FenceClick>().Initialize(game, boundary);
             fences.Add(boundary, fence);
             return true;
@@ -178,7 +178,7 @@ namespace Daidatsugoku
             if (boardFont == null) boardFont = Font.CreateDynamicFontFromOSFont(new[] { "Yu Gothic", "Meiryo", "Arial" }, 40);
             label.font = boardFont;
             label.GetComponent<MeshRenderer>().sharedMaterial = boardFont.material;
-            label.text = text; label.characterSize = .1f; label.fontSize = 40; label.color = Color.white;
+            label.text = text; label.characterSize = .1f; label.fontSize = 40; label.color = new Color(.79f, .83f, .80f);
             label.anchor = TextAnchor.MiddleCenter;
         }
 

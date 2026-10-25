@@ -1,0 +1,99 @@
+name: Promote merged PR to main
+
+on:
+  pull_request:
+    branches: [plan-main]
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      source_pr:
+        description: Number of a merged PR targeting plan-main
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: promote-to-main-${{ github.event.pull_request.number || inputs.source_pr }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # No checkout: merged project code is never executed with this token.
+      - name: Create main PR from the merged snapshot
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea9 # v7
+        env:
+          SOURCE_PR: ${{ github.event.pull_request.number || inputs.source_pr }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const input = process.env.SOURCE_PR;
+            if (!/^[1-9]\d*$/.test(input)) {
+              throw new Error('source_pr must be a positive integer.');
+            }
+            const pull_number = Number(input);
+            const { data: source } = await github.rest.pulls.get({ owner, repo, pull_number });
+            if (!source.merged || source.base.ref !== 'plan-main' ||
+                source.base.repo.full_name !== `${owner}/${repo}` || !source.merge_commit_sha) {
+              throw new Error('Source must be a merged PR targeting this repository\'s plan-main.');
+            }
+
+            const branch = `codex/promote-pr-${pull_number}`;
+            const existing = await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: 'all', base: 'main', head: `${owner}:${branch}`, per_page: 100
+            });
+            if (existing.length) {
+              core.notice(`Promotion PR already exists: ${existing[0].html_url}`);
+              await core.summary.addLink('Existing promotion PR', existing[0].html_url).write();
+              return;
+            }
+
+            const { data: comparison } = await github.rest.repos.compareCommits({
+              owner, repo, base: 'main', head: source.merge_commit_sha
+            });
+            if (comparison.ahead_by === 0) {
+              core.notice('The merged snapshot is already included in main.');
+              return;
+            }
+
+            try {
+              await github.rest.git.createRef({
+                owner, repo, ref: `refs/heads/${branch}`, sha: source.merge_commit_sha
+              });
+            } catch (error) {
+              if (error.status !== 422) throw error;
+              const { data: ref } = await github.rest.git.getRef({
+                owner, repo, ref: `heads/${branch}`
+              });
+              if (ref.object.sha !== source.merge_commit_sha) {
+                throw new Error(`Existing ${branch} does not match the source merge SHA; refusing to overwrite it.`);
+              }
+            }
+
+            const body = [
+              `Source PR: ${source.html_url}`,
+              `Merged into plan-main: ${source.merged_at}`,
+              `Snapshot: ${source.merge_commit_sha}`,
+              '',
+              'This PR promotes the plan-main snapshot recorded when the source PR merged.',
+              'It includes any earlier plan-main changes still absent from main.',
+              'Human review and merging are required. Auto-merge is not enabled.',
+              '',
+              '---',
+              'Original PR description:',
+              '',
+              source.body || '(No description.)'
+            ].join('\n').slice(0, 60000);
+            const { data: promoted } = await github.rest.pulls.create({
+              owner, repo, base: 'main', head: branch,
+              title: `[main] ${source.title}`.slice(0, 256), body
+            });
+            core.notice(`Created promotion PR: ${promoted.html_url}`);
+            await core.summary.addLink('Source PR', source.html_url)
+              .addBreak().addLink('Promotion PR (human merge required)', promoted.html_url).write();

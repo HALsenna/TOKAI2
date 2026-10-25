@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
@@ -9,6 +9,10 @@ namespace Daidatsugoku
     // Prototype UI is built at runtime; no inspector wiring is required.
     public sealed class GameHud : MonoBehaviour
     {
+        private static readonly Color Surface = new(.12f, .15f, .18f);
+        private static readonly Color Card = new(.17f, .21f, .24f);
+        private static readonly Color TextColor = new(.82f, .85f, .84f);
+        private static readonly Color Accent = new(.20f, .43f, .43f);
         private GameManager game;
         private Font font;
         private const int CardsPerPage = 5;
@@ -30,7 +34,9 @@ namespace Daidatsugoku
             canvasObject.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
             CanvasScaler scaler = canvasObject.GetComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1280, 800); scaler.matchWidthOrHeight = 1f;
+            scaler.referenceResolution = new Vector2(1280, 800);
+            // Fit the whole reference layout on both axes, including 4:3 windows.
+            scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.Expand;
 
             RectTransform sidebar = Panel("Sidebar", canvasObject.transform, new Color(.06f, .09f, .14f, .98f));
             sidebar.anchorMax = new Vector2(.29f, 1);
@@ -218,7 +224,7 @@ namespace Daidatsugoku
         }
         private RectTransform CenterCard(Transform parent, float width = 600, float height = 320)
         {
-            RectTransform rect = Panel("Card", parent, new Color(.10f, .15f, .22f));
+            RectTransform rect = Panel("Card", parent, Card);
             rect.anchorMin = rect.anchorMax = new Vector2(.5f, .5f); rect.pivot = new Vector2(.5f, .5f);
             rect.sizeDelta = new Vector2(width, height); rect.anchoredPosition = Vector2.zero; return rect;
         }
@@ -227,7 +233,7 @@ namespace Daidatsugoku
             GameObject obj = new("Text", typeof(RectTransform), typeof(Text)); obj.transform.SetParent(parent, false);
             SetRect(obj.GetComponent<RectTransform>(), x, y, width, height);
             Text label = obj.GetComponent<Text>(); label.font = font; label.fontSize = size;
-            label.text = text; label.color = Color.white; label.raycastTarget = false;
+            label.text = text; label.color = TextColor; label.raycastTarget = false;
             label.horizontalOverflow = HorizontalWrapMode.Wrap; label.verticalOverflow = VerticalWrapMode.Overflow;
             return label;
         }
@@ -239,6 +245,10 @@ namespace Daidatsugoku
             Button button = obj.GetComponent<Button>(); button.targetGraphic = obj.GetComponent<Image>(); button.onClick.AddListener(click);
             Text label = Label(text, obj.transform, 0, 0, width, height, 21); label.alignment = TextAnchor.MiddleCenter;
             return button;
+        }
+        private static void Highlight(Button button, bool selected)
+        {
+            button.GetComponent<Image>().color = selected ? Accent : new Color(.24f, .29f, .32f);
         }
         private static void SetRect(RectTransform rect, float x, float y, float width, float height)
         {

@@ -13,10 +13,12 @@ using UnityEngine.UI;
 public sealed class TurnCheckCard : SkillCardDefinition
 {
     public bool ForceImmediate;
+    public bool AllowMonitoringInterruption;
     public int Target = -1;
     public Func<GameManager, int, TurnEvent, bool> Condition;
     public Action<GameManager, int, TurnEvent> Effect;
     public override bool Immediate => ForceImmediate;
+    public override bool CanInvalidateGuardMonitoring => AllowMonitoringInterruption;
     public override int TargetPlayer(GameManager game, int owner) => Target;
     public override bool CanPlay(GameManager game, int owner, TurnEvent trigger) => Condition != null && Condition(game, owner, trigger);
     public override void Resolve(GameManager game, int owner, TurnEvent trigger) => Effect?.Invoke(game, owner, trigger);
@@ -99,7 +101,7 @@ public static class DaidatsugokuPrototypeChecks
                 if (current.Current is IEnumerator nested) { routines.Push(nested); continue; }
                 return;
             }
-            LastReport = $"PASS: {assertions} assertions; DEV-TURN-001 and SYS-GUARD-001 v1.2 deck, history, integration, board and HUD checks.";
+            LastReport = $"PASS: {assertions} assertions; DEV-TURN-001, SYS-GUARD-001 v1.2 and SYS-VISION-001 v1.0 scene, deck, history, vision, integration and HUD checks.";
             Debug.Log(LastReport); Cleanup();
         }
         catch (Exception exception)
@@ -190,7 +192,11 @@ public static class DaidatsugokuPrototypeChecks
             yield return CheckPasses(inert, policy);
             CheckCards(inert, policy); CheckPolicyWait(inert, policy); CheckInterruptedAction(inert);
             CheckActivationCancellation(inert); CheckUnresolvedEffects(inert); CheckActionOverflow(inert);
-            yield return CheckMonitoring(inert);
+            // The original owner-by-owner CheckMonitoring remains below for historical
+            // comparison; current SYS-VISION uses interruptions before discovery.
+            assertions += GuardVisionCalculatorChecks.Run();
+            yield return GuardVisionIntegrationChecks.Run(game);
+            assertions += GuardVisionIntegrationChecks.LastAssertions;
             assertions += GuardDeckChecks.Run();
             assertions += GuardSystemChecks.Run(game);
             CheckVictory(inert); yield return null;

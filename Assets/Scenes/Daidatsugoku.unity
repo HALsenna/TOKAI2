@@ -259,6 +259,8 @@ GameObject:
   - component: {fileID: 1440450520}
   - component: {fileID: 1440450519}
   - component: {fileID: 1440450518}
+  - component: {fileID: 1440450524}
+  - component: {fileID: 1440450523}
   m_Layer: 0
   m_Name: Daidatsugoku
   m_TagString: Untagged
@@ -336,6 +338,34 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1440450523
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1440450517}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c1d5c651f86249bebc28079af41ab501, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::Daidatsugoku.GuardVisionDebugDisplay
+  showVision: 0
+  visibleColor: {r: 0.2, g: 0.85, b: 1, a: 0.8}
+  fenceColor: {r: 1, g: 0.65, b: 0.15, a: 1}
+--- !u!114 &1440450524
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1440450517}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fff27073b3914ed9b08166fb73d78bc3, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::Daidatsugoku.GuardVisionSystem
+  field: {fileID: 11400000, guid: ce34b92d7f896b84ebf1d20722119e38, type: 2}
 --- !u!1 &1630911836
 GameObject:
   m_ObjectHideFlags: 0
@@ -414,7 +444,7 @@ Camera:
   far clip plane: 1000
   field of view: 60
   orthographic: 1
-  orthographic size: 5.5
+  orthographic size: 6
   m_Depth: -1
   m_CullingMask:
     serializedVersion: 2
@@ -439,7 +469,7 @@ Transform:
   m_GameObject: {fileID: 1630911836}
   serializedVersion: 2
   m_LocalRotation: {x: 0.7071068, y: 0, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 0, y: 12, z: 4}
+  m_LocalPosition: {x: 0, y: 12, z: 3.2}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []

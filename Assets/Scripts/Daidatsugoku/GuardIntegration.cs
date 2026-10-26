@@ -1,7 +1,8 @@
+using System.Collections.Generic;
+
 namespace Daidatsugoku
 {
-    // SYS-VISION-001 / SYS-PRISONER-001 are not supplied. These interfaces keep
-    // their rules outside SYS-GUARD-001; the defaults below are prototype adapters.
+    // Vision uses SYS-VISION-001. Prisoner state remains a separate service.
     public interface IGuardVisionService
     {
         bool IsVisible(GridManager grid, Prisoner prisoner);
@@ -12,13 +13,28 @@ namespace Daidatsugoku
         void FailEscape(Prisoner prisoner);
     }
 
+    // One snapshot per discovery, rather than recalculating once per prisoner.
+    public interface IGuardVisionSnapshotService : IGuardVisionService
+    {
+        IReadOnlyCollection<VisionCell> CalculateVisibleCells(GridManager grid);
+    }
+
+    public interface IGuardPrisonerBatchService : IGuardPrisonerService
+    {
+        void FailEscape(IReadOnlyList<Prisoner> prisoners);
+    }
+
     public sealed class PrototypeGuardVisionService : IGuardVisionService
     {
         public bool IsVisible(GridManager grid, Prisoner prisoner) => !grid.IsProtected(prisoner.Cell);
     }
 
-    public sealed class PrototypeGuardPrisonerService : IGuardPrisonerService
+    public sealed class PrototypeGuardPrisonerService : IGuardPrisonerBatchService
     {
         public void FailEscape(Prisoner prisoner) => prisoner.Capture();
+        public void FailEscape(IReadOnlyList<Prisoner> prisoners)
+        {
+            foreach (Prisoner prisoner in prisoners) prisoner.Capture();
+        }
     }
 }

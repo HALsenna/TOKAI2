@@ -16,8 +16,14 @@ namespace Daidatsugoku
         [SerializeField] private GuardCardSource monitoringSource;
         // Only already revealed results cross the public/UI boundary.
         public IReadOnlyList<GuardHistoryEntry> PublicHistory => history.AsReadOnly();
-        public IGuardVisionService VisionService { get; set; } = new PrototypeGuardVisionService();
+        public IGuardVisionService VisionService { get; set; }
         public IGuardPrisonerService PrisonerService { get; set; } = new PrototypeGuardPrisonerService();
+        public event System.Action<IReadOnlyList<Prisoner>> PrisonersDiscovered;
+
+        private void Awake()
+        {
+            VisionService = GetComponent<GuardVisionSystem>() ?? gameObject.AddComponent<GuardVisionSystem>();
+        }
         public GuardCardSource MonitoringSource
         {
             get => monitoringSource;
@@ -72,14 +78,19 @@ namespace Daidatsugoku
             _ => throw new System.ArgumentOutOfRangeException(nameof(card))
         };
 
-        public List<Prisoner> FindTargets(PatrolCard card, GridManager grid, IReadOnlyList<Prisoner> prisoners)
+        public List<Prisoner> FindTargets(PatrolCard card, GridManager grid, IReadOnlyList<Prisoner> prisoners, bool monitoringEnabled = true)
         {
             List<Prisoner> targets = new();
-            if (card == PatrolCard.NotWatching) return targets;
+            if (!monitoringEnabled || card == PatrolCard.NotWatching) return targets;
             if (card != PatrolCard.WatchAllCells) throw new System.ArgumentOutOfRangeException(nameof(card));
+            HashSet<VisionCell> visible = VisionService is IGuardVisionSnapshotService snapshot
+                ? new HashSet<VisionCell>(snapshot.CalculateVisibleCells(grid)) : null;
             foreach (Prisoner prisoner in prisoners)
             {
-                if (!prisoner.IsOnBoard || !VisionService.IsVisible(grid, prisoner)) continue;
+                if (!prisoner.IsOnBoard || !grid.IsInside(prisoner.Cell)) continue;
+                bool inSight = visible != null ? visible.Contains(new VisionCell(prisoner.Cell.y, grid.GlobalColumn(prisoner.Cell)))
+                    : VisionService.IsVisible(grid, prisoner);
+                if (!inSight) continue;
                 targets.Add(prisoner);
             }
             return targets;
@@ -92,13 +103,19 @@ namespace Daidatsugoku
 
         public int ApplyMonitoringFailure(IReadOnlyList<Prisoner> targets)
         {
-            int captured = 0;
+            List<Prisoner> discovered = new();
+            HashSet<Prisoner> unique = new();
             foreach (Prisoner prisoner in targets)
             {
-                if (!prisoner.IsOnBoard) continue;
-                PrisonerService.FailEscape(prisoner); captured++;
+                if (prisoner.IsOnBoard && unique.Add(prisoner)) discovered.Add(prisoner);
             }
-            return captured;
+            if (discovered.Count == 0) return 0;
+            var notification = discovered.AsReadOnly();
+            // The complete set is published together before state transitions.
+            PrisonersDiscovered?.Invoke(notification);
+            if (PrisonerService is IGuardPrisonerBatchService batch) batch.FailEscape(notification);
+            else foreach (Prisoner prisoner in notification) PrisonerService.FailEscape(prisoner);
+            return discovered.Count;
         }
     }
 }

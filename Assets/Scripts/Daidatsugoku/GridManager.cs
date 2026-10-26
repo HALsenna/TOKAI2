@@ -17,6 +17,8 @@ namespace Daidatsugoku
         private readonly Dictionary<FenceBoundary, GameObject> fences = new();
         private readonly Dictionary<Color, Material> materials = new();
         private Transform generated;
+        private Transform guardPost;
+        private TextMesh guardPostLabel;
         private GameManager game;
         private Font boardFont;
 
@@ -73,6 +75,42 @@ namespace Daidatsugoku
         }
         public int FenceCount => fences.Count;
 
+        // Temporary bridge from the existing shared-boundary fence model to
+        // SYS-VISION-001's front-of-cell coordinates. A horizontal line is the
+        // front of the cell below it. Vertical/outer-only boundaries are not
+        // front fences; their gameplay rules remain with the field/fence spec.
+        public IReadOnlyCollection<VisionCell> GetVisionFrontFences()
+        {
+            var result = new List<VisionCell>();
+            foreach (FenceBoundary boundary in fences.Keys)
+                if (!boundary.Vertical && TryGetCell(boundary.Column, boundary.Line, out _))
+                    result.Add(new VisionCell(boundary.Line, boundary.Column));
+            return result.AsReadOnly();
+        }
+
+        public Vector3 GuardWorldPosition(int column, GuardSide side)
+        {
+            if (column < 0 || column >= Width) throw new System.ArgumentOutOfRangeException(nameof(column));
+            if (side != GuardSide.Top && side != GuardSide.Bottom) throw new System.ArgumentOutOfRangeException(nameof(side));
+            return transform.position + new Vector3((column - 3) * Spacing, 0, side == GuardSide.Top ? RowCount * Spacing : -Spacing);
+        }
+
+        public void UpdateGuardPosition(int column, GuardSide side)
+        {
+            if (guardPost == null || guardPostLabel == null) return;
+            Vector3 position = GuardWorldPosition(column, side);
+            guardPost.position = position;
+            guardPostLabel.transform.position = position + Vector3.up * .09f;
+            guardPostLabel.text = $"看守 {side.ToString().ToUpperInvariant()}\n列 {column}";
+            guardPost.gameObject.SetActive(true); guardPostLabel.gameObject.SetActive(true);
+        }
+
+        public void HideGuardPosition()
+        {
+            if (guardPost != null) guardPost.gameObject.SetActive(false);
+            if (guardPostLabel != null) guardPostLabel.gameObject.SetActive(false);
+        }
+
         public Material GetMaterial(Color color)
         {
             if (!materials.TryGetValue(color, out Material material))
@@ -88,6 +126,7 @@ namespace Daidatsugoku
         {
             game = manager;
             if (generated != null) { generated.gameObject.SetActive(false); Destroy(generated.gameObject); }
+            guardPost = null; guardPostLabel = null;
             fences.Clear();
             generated = new GameObject("GeneratedBoard").transform;
             generated.SetParent(transform, false);
@@ -107,10 +146,11 @@ namespace Daidatsugoku
                 GameObject goal = Primitive(PrimitiveType.Cube, $"EscapeGoal_{(char)('A' + row)}", edge, new Vector3(.1f, .1f, 1.45f), new Color(.35f, .66f, .49f));
                 goal.GetComponent<Collider>().enabled = false;
             }
-            Vector3 guardPosition = WorldPosition(new Vector2Int(1, 0)) + new Vector3(0, 0, Spacing);
-            GameObject guardPost = Primitive(PrimitiveType.Cube, "GuardPost", guardPosition, new Vector3(1.45f, .15f, 1.45f), new Color(.17f, .2f, .27f));
+            guardPost = Primitive(PrimitiveType.Cube, "GuardPost", transform.position, new Vector3(1.45f, .15f, 1.45f), new Color(.17f, .2f, .27f)).transform;
             guardPost.GetComponent<Collider>().enabled = false;
-            Label("監視官", guardPosition + Vector3.up * .09f);
+            guardPostLabel = Label("看守", transform.position);
+            // Do not show an invented initial position while field data is absent.
+            guardPost.gameObject.SetActive(false); guardPostLabel.gameObject.SetActive(false);
             foreach (Vector2Int cell in StartingFences) PlaceFence(cell);
         }
 
@@ -169,7 +209,7 @@ namespace Daidatsugoku
             return obj;
         }
 
-        private void Label(string text, Vector3 position)
+        private TextMesh Label(string text, Vector3 position)
         {
             GameObject obj = new("Label_" + text);
             obj.transform.SetParent(generated, false);
@@ -180,6 +220,7 @@ namespace Daidatsugoku
             label.GetComponent<MeshRenderer>().sharedMaterial = boardFont.material;
             label.text = text; label.characterSize = .1f; label.fontSize = 40; label.color = new Color(.79f, .83f, .80f);
             label.anchor = TextAnchor.MiddleCenter;
+            return label;
         }
 
         private void OnDestroy()

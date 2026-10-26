@@ -15,14 +15,20 @@ public static class GuardValidationBatch
     private static double captureAt;
     private static bool started;
     private static string report;
+    private static int captureStage;
+    private static string Artifact => SessionState.GetString(Key + ".artifact", "SYS-GUARD-001");
 
     static GuardValidationBatch()
     {
         if (SessionState.GetBool(Key, false)) EditorApplication.update += Tick;
     }
 
-    public static void Run()
+    public static void Run() => RunFor("SYS-GUARD-001");
+    public static void RunVision() => RunFor("SYS-VISION-001");
+
+    private static void RunFor(string artifact)
     {
+        SessionState.SetString(Key + ".artifact", artifact);
         SessionState.SetBool(Key, true);
         SessionState.SetString(Key + ".deadline", DateTime.UtcNow.AddMinutes(5).ToString("O"));
         EditorApplication.update -= Tick; EditorApplication.update += Tick;
@@ -47,7 +53,7 @@ public static class GuardValidationBatch
         group.GetType().GetMethod("AddCustomSize").Invoke(group, new[] { size });
         int builtin = (int)group.GetType().GetMethod("GetBuiltinCount").Invoke(group, null);
         int custom = (int)group.GetType().GetMethod("GetCustomCount").Invoke(group, null);
-        SessionState.SetInt(Key + ".customSize", custom - 1);
+        SessionState.SetInt(Key + ".customSize", builtin + custom - 1);
         SessionState.SetBool(Key + ".restoreSize", true);
         selectedSize.SetValue(view, builtin + custom - 1);
         view.Show();
@@ -91,12 +97,13 @@ public static class GuardValidationBatch
                 if (result == "Running" || result == "Not run") return;
                 if (!result.StartsWith("PASS")) throw new InvalidOperationException(result);
                 report = result;
-                GuardSystemChecks.PreparePreview(game);
+                if (Artifact == "SYS-VISION-001") GuardVisionSceneSetup.PreparePreview(game);
+                else GuardSystemChecks.PreparePreview(game);
                 captureAt = EditorApplication.timeSinceStartup + 2;
                 return;
             }
             if (EditorApplication.timeSinceStartup < captureAt) return;
-            string path = "Logs/SYS-GUARD-001-history.png";
+            string path = Artifact == "SYS-VISION-001" ? $"Logs/{Artifact}-{(captureStage == 0 ? "top" : "bottom")}.png" : "Logs/SYS-GUARD-001-history.png";
             if (!SessionState.GetBool(Key + ".captured", false))
             {
                 ScreenCapture.CaptureScreenshot(path);
@@ -104,14 +111,24 @@ public static class GuardValidationBatch
                 captureAt = EditorApplication.timeSinceStartup + 3;
                 return;
             }
-            Complete(report + "\nHistory preview: " + path, 0);
+            if (Artifact == "SYS-VISION-001" && captureStage == 0)
+            {
+                game.Vision.Flip(); captureStage = 1;
+                SessionState.SetBool(Key + ".captured", false);
+                captureAt = EditorApplication.timeSinceStartup + 2;
+                return;
+            }
+            string previews = Artifact == "SYS-VISION-001"
+                ? "Vision previews: Logs/SYS-VISION-001-top.png, Logs/SYS-VISION-001-bottom.png"
+                : "History preview: " + path;
+            Complete(report + "\n" + previews, 0);
         }
         catch (Exception exception) { Debug.LogException(exception); Complete("FAIL: " + exception, 1); }
     }
 
     private static void Complete(string result, int exitCode)
     {
-        Directory.CreateDirectory("Logs"); File.WriteAllText("Logs/SYS-GUARD-001-validation.txt", result);
+        Directory.CreateDirectory("Logs"); File.WriteAllText($"Logs/{Artifact}-validation.txt", result);
         Debug.Log(result);
         try { RestoreGameView(); }
         catch (Exception exception) { Debug.LogWarning("Could not restore validation Game view: " + exception.Message); }
@@ -120,18 +137,21 @@ public static class GuardValidationBatch
         EditorApplication.Exit(exitCode);
     }
 
-    public static void BuildPlayer()
+    public static void BuildPlayer() => BuildPlayerFor("SYS-GUARD-001");
+    public static void BuildVisionPlayer() => BuildPlayerFor("SYS-VISION-001");
+
+    private static void BuildPlayerFor(string artifact)
     {
-        Directory.CreateDirectory("Builds/SYS-GUARD-001");
+        Directory.CreateDirectory($"Builds/{artifact}");
         BuildReport build = BuildPipeline.BuildPlayer(new BuildPlayerOptions
         {
             scenes = new[] { DaidatsugokuSceneBuilder.ScenePath },
-            locationPathName = "Builds/SYS-GUARD-001/TOKAI2.exe",
+            locationPathName = $"Builds/{artifact}/TOKAI2.exe",
             target = BuildTarget.StandaloneWindows64,
             options = BuildOptions.Development
         });
         string result = $"{build.summary.result}: errors={build.summary.totalErrors}, warnings={build.summary.totalWarnings}, time={build.summary.totalTime}";
-        File.WriteAllText("Logs/SYS-GUARD-001-build.txt", result); Debug.Log(result);
+        File.WriteAllText($"Logs/{artifact}-build.txt", result); Debug.Log(result);
         if (build.summary.result != BuildResult.Succeeded) EditorApplication.Exit(1);
     }
 }

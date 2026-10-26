@@ -22,6 +22,7 @@ namespace Daidatsugoku
         public TurnPhase Phase { get; private set; }
         public GridManager Grid { get; private set; }
         public GuardSystem Guard { get; private set; }
+        public GuardVisionSystem Vision { get; private set; }
         public int PlayerCount { get; private set; }
         public int CurrentPlayer { get; private set; }
         public int PendingPlayer { get; private set; }
@@ -59,11 +60,12 @@ namespace Daidatsugoku
         private PrototypeActionQuery boardRules;
         private Prisoner selected;
         private int turnIndex;
-        private bool resolving, beginningTurn, autoPassScheduled, guardTurnStarted;
+        private bool resolving, beginningTurn, autoPassScheduled, guardTurnStarted, guardMonitoringResolved;
         private bool HistoryInputBlocked => GetComponent<GameHud>().IsHistoryOpen;
         private Operation operation;
         private ResponseChain<CardActivation> responses;
-        private TurnEvent responseTrigger, guardEvent;
+        private TurnEvent responseTrigger, guardEvent, guardMonitoringEvent;
+        private string visionSetupReason;
         private System.Action blockedRetry, afterDiscard;
         private string unresolvedDraw;
         private static readonly Color[] Colors = { new(.95f, .25f, .25f), new(.25f, .55f, 1f), new(1f, .85f, .2f), new(.65f, .35f, .95f) };
@@ -87,6 +89,7 @@ namespace Daidatsugoku
         {
             Application.runInBackground = true;
             Grid = GetComponent<GridManager>(); Guard = GetComponent<GuardSystem>(); boardRules = new PrototypeActionQuery(this);
+            Vision = GetComponent<GuardVisionSystem>() ?? gameObject.AddComponent<GuardVisionSystem>();
         }
         private void Start() { GetComponent<GameHud>().Initialize(this); RestartGame(); }
         public void Configure(int count, IEnumerable<SkillCardDefinition> deck, NormalActionRules actionRules = null, TurnFlowPolicy flowPolicy = null)
@@ -108,9 +111,9 @@ namespace Daidatsugoku
         {
             StopAllCoroutines(); ClearSelection();
             State = GameState.Setup; Phase = TurnPhase.Setup; Round = 1; Winner = -1;
-            Message = ResultMessage = ""; ActionConsumed = ActionDeclared = resolving = beginningTurn = autoPassScheduled = guardTurnStarted = false;
+            Message = ResultMessage = ""; ActionConsumed = ActionDeclared = resolving = beginningTurn = autoPassScheduled = guardTurnStarted = guardMonitoringResolved = false;
             unresolvedDraw = null;
-            operation = null; responses = null; responseTrigger = guardEvent = null; blockedRetry = afterDiscard = null;
+            operation = null; responses = null; responseTrigger = guardEvent = guardMonitoringEvent = null; blockedRetry = afterDiscard = null;
             OverflowPlayer = -1; prisoners.Clear(); order.Clear(); confirmedEscapes.Clear(); deferredImmediate.Clear(); guardTargets.Clear(); guardOwners.Clear();
             Array.Clear(escaped, 0, escaped.Length); foreach (var hand in hands) hand.Clear();
             PlayerCount = Mathf.Clamp(playerCount, 2, 4);
@@ -120,12 +123,18 @@ namespace Daidatsugoku
                 int j = UnityEngine.Random.Range(0, i + 1); (order[i], order[j]) = (order[j], order[i]);
             }
             Grid.Build(this); Guard.ResetDeck(); Cards.Reset(skillCards, size => UnityEngine.Random.Range(0, size));
+            Vision.TryResetPosition(out visionSetupReason);
             for (int p = 0; p < PlayerCount; p++)
                 for (int i = 0; i < 3; i++) prisoners.Add(Grid.CreatePrisoner(p, new Vector2Int(0, p), Colors[p]));
             Grid.RefreshPiecePositions(prisoners); turnIndex = 0; CurrentPlayer = order[0]; Notify();
         }
         public void RestartGame() { if (HistoryInputBlocked) return; InitializeGame(); StartFirstTurn(); }
-        public void StartFirstTurn() { if (State == GameState.Setup) BeginTurn(order[0]); }
+        public void StartFirstTurn()
+        {
+            if (State != GameState.Setup) return;
+            if (visionSetupReason != null) { WaitForSpecification(visionSetupReason, RestartGame); return; }
+            BeginTurn(order[0]);
+        }
         private void BeginTurn(int player)
         {
             CurrentPlayer = player; ActionConsumed = ActionDeclared = false; ClearSelection(); Action = PlayerAction.PlacePrisoner;
@@ -245,6 +254,7 @@ namespace Daidatsugoku
         {
             if (owner < 0 || owner >= PlayerCount || index < 0 || index >= hands[owner].Count || OverflowPlayer >= 0 || resolving || State == GameState.Result) return false;
             var card = hands[owner][index]; if (card.Immediate) return false;
+            if (IsMonitoringContext(responseTrigger) && !card.CanInvalidateGuardMonitoring) return false;
             if (IsChainOpen)
             {
                 int target = card.TargetPlayer(this, owner);
@@ -281,9 +291,14 @@ namespace Daidatsugoku
             for (int owner = 0; owner < PlayerCount; owner++)
             {
                 if (trigger.Kind == TurnEventKind.SkillActivation && trigger.Target >= 0 && owner != trigger.Actor && owner != trigger.Target) continue;
-                foreach (var card in hands[owner]) if (!card.Immediate && card.CanPlay(this, owner, trigger)) { eligible.Add(owner); break; }
+                foreach (var card in hands[owner]) if (!card.Immediate && (!IsMonitoringContext(trigger) || card.CanInvalidateGuardMonitoring) && card.CanPlay(this, owner, trigger)) { eligible.Add(owner); break; }
             }
             return eligible;
+        }
+        private static bool IsMonitoringContext(TurnEvent trigger)
+        {
+            while (trigger?.Parent != null) trigger = trigger.Parent;
+            return trigger?.Kind == TurnEventKind.GuardMonitoring;
         }
         private void StartOperation(TurnEvent trigger, CardActivation initial, System.Action complete, bool consumesAction)
         {
@@ -415,15 +430,37 @@ namespace Daidatsugoku
             if (State != GameState.GuardTurn || guardTurnStarted) return;
             if (!Guard.TryDrawMonitoring(Round, out var card, out var reason)) { WaitForSpecification(reason, BeginGuardTurn); return; }
             guardTurnStarted = true;
-            guardTargets.Clear(); guardOwners.Clear();
-            foreach (var piece in Guard.FindTargets(card, Grid, Prisoners))
-            {
-                if (!guardTargets.TryGetValue(piece.Owner, out var targets)) { targets = new List<Prisoner>(); guardTargets.Add(piece.Owner, targets); }
-                targets.Add(piece);
-            }
-            Phase = TurnPhase.GuardReveal; Say($"監視結果：{Guard.GetCardName(card)}"); StartCoroutine(RevealGuard());
+            guardMonitoringResolved = false;
+            guardMonitoringEvent = new TurnEvent(TurnEventKind.GuardMonitoring, -1, monitoringResult: card);
+            Phase = TurnPhase.GuardReveal; Say($"監視カード：{Guard.GetCardName(card)}（割り込み解決前）"); StartCoroutine(RevealGuard());
         }
-        private IEnumerator RevealGuard() { yield return new WaitForSecondsRealtime(guardRevealSeconds); if (State == GameState.GuardTurn) PlanGuardOwners(); }
+        private IEnumerator RevealGuard()
+        {
+            yield return new WaitForSecondsRealtime(guardRevealSeconds);
+            if (State == GameState.GuardTurn) StartOperation(guardMonitoringEvent, null, FinalizeGuardMonitoring, false);
+        }
+        private void FinalizeGuardMonitoring()
+        {
+            if (State != GameState.GuardTurn || guardMonitoringResolved || guardMonitoringEvent == null) return;
+            var monitoring = guardMonitoringEvent;
+            List<Prisoner> targets;
+            try { targets = Guard.FindTargets(monitoring.MonitoringResult.Value, Grid, Prisoners, !monitoring.Cancelled); }
+            catch (InvalidOperationException exception) { WaitForSpecification(exception.Message, FinalizeGuardMonitoring); return; }
+            guardMonitoringResolved = true;
+            Say(monitoring.Cancelled ? "監視は無効になりました。" : $"監視結果確定：{Guard.GetCardName(monitoring.MonitoringResult.Value)}");
+            try { Guard.ApplyMonitoringFailure(targets); }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception);
+                WaitForSpecification("囚人発見の通知・状態更新に失敗しました。途中適用を再実行せず停止しています。関連サービスを確認して対局を再開始してください。", null);
+                return;
+            }
+            Grid.RefreshPiecePositions(prisoners);
+            FinishGuardTurn();
+        }
+
+        // Compatibility path retained for earlier SYS-TURN integrations. SYS-VISION
+        // uses the pre-vision GuardMonitoring chain and one simultaneous notification.
         private void PlanGuardOwners()
         {
             if (State != GameState.GuardTurn) return;

@@ -73,33 +73,38 @@ public static class FieldStageChecks
 
     private static void CheckStageShapes(Action<bool, string> require)
     {
-        // All five serialized stage assets, including approved Stage01, are also checked by catalog integration.
-        FieldStage[] drafts =
+        // The actual serialized assets are independently checked by catalog integration.
+        // Stage01 keeps the previously approved correction; Stage03 uses the user-approved 31-cell row data.
+        FieldStage[] stages =
         {
-            Stage("02", 8, 5, new[] { new FieldRow(0, 0, 5), new(1, 0, 6), new(2, 0, 7), new(3, 0, 6), new(4, 0, 5) }, 3, false, null),
-            Stage("03", 7, 6, new[] { new FieldRow(0, 0, 3), new(1, 0, 5), new(2, 1, 6), new(3, 1, 6), new(4, 0, 4), new(5, 0, 3) }, 2, false, null),
-            Stage("04", 7, 7, new[] { new FieldRow(0, 1, 3), new(1, 0, 4), new(2, 0, 5), new(3, 0, 6), new(4, 0, 5), new(5, 0, 4), new(6, 1, 3) }, 2, false, null),
-            Stage("05", 9, 9, new[] { new FieldRow(0, 1, 6), new(1, 1, 7), new(2, 0, 8), new(3, 2, 5), new(4, 3, 5), new(5, 2, 5), new(6, 0, 8), new(7, 1, 7), new(8, 1, 6) }, 4, false, null)
+            Stage("01", 7, 5, new[] { new FieldRow(0, 0, 6), new(1, 0, 5), new(2, 1, 5), new(3, 1, 4), new(4, 2, 4) }, 3, true,
+                new[] { new FieldCell(1, 3), new(1, 2), new(2, 0), new(3, 2), new(4, 1) }),
+            Stage("02", 8, 5, new[] { new FieldRow(0, 0, 5), new(1, 0, 6), new(2, 0, 7), new(3, 0, 6), new(4, 0, 5) }, 3, true,
+                new[] { new FieldCell(1, 4), new(4, 3), new(5, 2), new(4, 1), new(2, 0) }),
+            Stage("03", 7, 6, new[] { new FieldRow(0, 0, 4), new(1, 0, 4), new(2, 1, 6), new(3, 1, 6), new(4, 0, 4), new(5, 0, 3) }, 2, true,
+                new[] { new FieldCell(0, 5), new(2, 4), new(4, 3), new(5, 2), new(2, 1) }),
+            Stage("04", 9, 7, new[] { new FieldRow(0, 0, 8), new(1, 0, 8), new(2, 0, 7), new(3, 1, 6), new(4, 1, 5), new(5, 2, 5), new(6, 2, 4) }, 3, true,
+                new[] { new FieldCell(2, 5), new(4, 4), new(3, 3), new(5, 2), new(2, 1), new(6, 1), new(4, 0) })
         };
-        int[] expected = { 34, 31, 35, 55 };
+        int[] expected = { 25, 34, 31, 44 };
         FieldCell[][] expectedBans =
         {
             new[] { new FieldCell(2, 4), new(3, 4), new(4, 4) },
+            new[] { new FieldCell(2, 4), new(3, 4), new(4, 4) },
             new[] { new FieldCell(1, 5), new(2, 5), new(3, 5) },
-            new[] { new FieldCell(1, 6), new(2, 6), new(3, 6) },
-            new[] { new FieldCell(3, 8), new(4, 8), new(5, 8) }
+            new[] { new FieldCell(2, 6), new(3, 6), new(4, 6) }
         };
-        for (int i = 0; i < drafts.Length; i++)
+        for (int i = 0; i < stages.Length; i++)
         {
-            FieldStage stage = drafts[i];
-            require(FieldStageValidator.Validate(stage).Count == 0, "The supplied draft shape must remain structurally valid.");
-            require(stage.CellCount == expected[i] && stage.Cells.Count == expected[i], "The provided stage's exact row intervals must produce its documented cell count.");
+            FieldStage stage = stages[i];
+            require(FieldStageValidator.Validate(stage).Count == 0, "The supplied confirmed stage shape and fences must be structurally valid.");
+            require(stage.CellCount == expected[i] && stage.Cells.Count == expected[i], "The exact approved row intervals must produce the confirmed cell count.");
             require(new HashSet<FieldCell>(stage.FenceForbiddenCells).SetEquals(expectedBans[i]), "The stage's supplied guard column must produce its three documented fence bans.");
-            require(!FieldStageValidator.TryValidateForPlay(stage, out var reason) && !string.IsNullOrEmpty(reason), "Unknown initial fences must prevent gameplay while retaining shape data.");
-            require(stage.StartCells.Count == stage.Height && stage.ExitCells.Count == stage.Height, "Every draft row must expose a start and exit.");
+            require(FieldStageValidator.TryValidateForPlay(stage, out _), "The four confirmed initial fence lists must allow field initialization.");
+            require(stage.StartCells.Count == stage.Height && stage.ExitCells.Count == stage.Height, "Every confirmed row must expose a start and exit.");
         }
-        require(FieldStageValidator.ValidateCatalog(drafts).Count == 0, "A catalog of distinct structurally valid drafts must validate without pretending the drafts are playable.");
-        require(FieldStageValidator.ValidateCatalog(drafts.Concat(new[] { drafts[0] })).Count > 0, "Duplicate stage IDs must be rejected across the catalog.");
+        require(FieldStageValidator.ValidateCatalog(stages).Count == 0, "A catalog of the four confirmed stages must validate.");
+        require(FieldStageValidator.ValidateCatalog(stages.Concat(new[] { stages[0] })).Count > 0, "Duplicate stage IDs must be rejected across the catalog.");
     }
 
     private static void CheckValidation(Action<bool, string> require, FieldRow[] validRows)
@@ -131,7 +136,7 @@ public static class FieldStageChecks
         FieldStage pendingEmpty = Stage("pending", 7, 5, validRows, 3, false, Array.Empty<FieldCell>());
         require(FieldStageValidator.Validate(pendingEmpty).Count == 0 && !FieldStageValidator.TryValidateForPlay(pendingEmpty, out _), "An empty pending fence list must not be interpreted as confirmed no-fence gameplay.");
         FieldStage large = Stage("large", 40, 60, Enumerable.Range(0, 60).Select(y => new FieldRow(y, 0, 39)), 20, true, Array.Empty<FieldCell>());
-        require(FieldStageValidator.Validate(large).Count == 0 && large.CellCount == 2400, "The five supplied shapes must not impose an invented maximum map size.");
+        require(FieldStageValidator.Validate(large).Count == 0 && large.CellCount == 2400, "The supplied shapes must not impose an invented maximum map size.");
     }
 
     private static void CheckSnapshots(Action<bool, string> require, FieldRow[] rows)

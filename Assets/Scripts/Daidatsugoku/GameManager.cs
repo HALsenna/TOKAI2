@@ -100,6 +100,7 @@ namespace Daidatsugoku
             Vision = GetComponent<GuardVisionSystem>() ?? gameObject.AddComponent<GuardVisionSystem>();
             foreach (var definition in Resources.LoadAll<FieldStageDefinition>("FieldStages"))
             {
+                if (!definition.IncludedInSelection) continue;
                 var stage = definition.ToStage(); stages.Add(stage);
                 if (!string.IsNullOrWhiteSpace(definition.SourceIssue) && stage.StageId != null) stageSourceIssues[stage.StageId] = definition.SourceIssue;
             }

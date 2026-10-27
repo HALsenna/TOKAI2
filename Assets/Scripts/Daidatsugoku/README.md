@@ -1,8 +1,8 @@
 # 大脱獄：ゲームフロー・看守監視・看守視界・フィールド構造
 
-Unity `6000.6.6f1` / C# の既存プロジェクトです。DEV-TURN-001のゲームフロー、SYS-GUARD-001 v1.2の監視山札・公開履歴、SYS-VISION-001 v1.0の看守視界に、SYS-FIELD-001 v1.0のデータ駆動フィールドを接続しています。今回のブランチは `codex/sys-field-001-v1-0` です。`origin/plan-main` を基点とし、依存する監視・視界のコミットを含みます。
+Unity `6000.6.6f1` / C# の既存プロジェクトです。DEV-TURN-001のゲームフロー、SYS-GUARD-001 v1.2の監視山札・公開履歴、SYS-VISION-001 v1.0の看守視界に、SYS-FIELD-001 v1.1のデータ駆動フィールドを接続しています。今回のブランチは `codex/sys-field-001-v1-0` を継続し、`origin/plan-main` を基点とする監視・視界の依存コミットを含みます。
 
-監視山札の確率・構成・履歴管理と純粋な視界の式は維持しています。形状・初期柵・初期看守は選択ステージから取得します。本番スキルカード・山札構成は未提供のため、ステージ01を開始しても既定シーンではカード設定待ちになります。製品版の対局全体やSYS-PRISONER-001が実装完了した状態ではありません。
+監視山札の確率・構成・履歴管理と純粋な視界の式は維持しています。形状・初期柵・初期看守は選択ステージから取得します。ユーザー指定の仮山札として「カードを1枚引く」25枚と「看守上下反転」5枚をシーンに設定し、最初のドローから試せる構成です。正式カード仕様とSYS-PRISONER-001の実装は引き続き別作業です。
 
 ## 起動・設定
 
@@ -12,21 +12,32 @@ Unity `6000.6.6f1` / C# の既存プロジェクトです。DEV-TURN-001のゲ�
 
 シーン作成メニューは `Tools > Daidatsugoku > Create Prototype Scene` です。既存シーンを上書きしないため、通常は作成済みシーンを開きます。Unity の Build Profiles から同シーンを対象にビルドします。
 
-ステージアセットの初回生成は、Playを停止して `Tools > Daidatsugoku > Configure Field Stages` を実行します。`FieldStageAssetBuilder.ConfigureProject()` は既存ステージアセットを上書きしません。旧メニュー `Configure Prototype Guard Vision` も同じ設定処理を呼びます。
+ステージデータをv1.1へ設定する場合は、Playを停止して `Tools > Daidatsugoku > Configure Field Stages` を実行します。`FieldStageAssetBuilder.ConfigureProject()` は指定パスのステージ01〜04を承認済みデータで更新し、既存の05を選択対象から外します。追加の独自ステージは変更しません。旧メニュー `Configure Prototype Guard Vision` も同じ設定処理を呼びます。
+
+仮山札の設定は `Tools > Daidatsugoku > Configure Prototype Skill Cards` です。`PrototypeSkillCardAssetBuilder.ConfigureProject()` が `Assets/Settings/PrototypeSkillCards` のカード・進行設定アセットを作成し、既定シーンの `skillCards` を25枚＋5枚、`flowPolicy` を仮設定へ更新します。
 
 設定項目は以下のとおりです。
 
 | 設定先 | 内容 |
 |---|---|
 | `GameManager.playerCount` | 2～4人、既定3人。開始時にランダムな固定手番順を決定。 |
-| `GameManager.skillCards` | `SkillCardDefinition` 派生型の本番カードアセット。枚数・条件・効果はカード仕様に従う。 |
+| `GameManager.skillCards` | 既定シーンは仮1枚ドローカード25枚・仮看守上下反転カード5枚。正式カードの枚数・条件・効果は別途カード仕様に従う。 |
 | `GuardSystem.monitoringSource` | 任意の `GuardCardSource` 派生型による上書き。未指定なら v1.2 の標準監視山札を使用し、本番監視用アセットの設定は不要。成功した最初の監視以降の変更は次回 `ResetDeck()` から適用。 |
-| `Assets/Resources/FieldStages/*.asset` | `FieldStageDefinition`。ID・名称・寸法・行範囲・初期看守・初期柵を保持。起動時に自動列挙し、構造と開始可否を検証。 |
+| `Assets/Resources/FieldStages/*.asset` | `FieldStageDefinition`。ID・名称・寸法・行範囲・初期看守・初期柵を保持。`IncludedInSelection=true` のアセットを起動時に自動列挙し、構造と開始可否を検証。 |
 | `GameManager.CollisionResolver` | `IPrisonerCollisionResolver`。占有先への移動を囚人システムへ委譲。未接続時は理由を表示して停止。 |
-| `GameManager.flowPolicy` | `TurnFlowPolicy` 派生型。初回対応権、対象なし/複数対象、複数所有者順などの確定仕様を渡す。 |
+| `GameManager.flowPolicy` | 既定シーンは `PrototypeSkillFlowPolicy`。通常行動と仮2カードに限り、対応可能者0人の処理を許可。正式な割り込み順は別途 `TurnFlowPolicy` で設定。 |
 | `GameManager.actionRules` | `NormalActionRules` 派生型。未指定時は `PrototypeActionQuery` が既存盤面ルールへ問い合わせる。 |
 
-本番スキルカードと未確定の対応方針は、抽象型だけでは設定完了になりません。Editor 検証のカード・監視上書き・優先順位フィクスチャーは、それらの本番仕様の代用にしません。
+仮カードは今回のユーザー指定を試すための設定です。正式なカード種類・効果・割り込み条件・優先順位の完成を意味しません。Editor検証用の監視上書きや追加カードも正式仕様とは区別します。
+
+### 仮スキルカード
+
+- `PrototypeDrawOneCard`（25枚）：手札から使用し、所有者がカードを1枚引きます。
+- `PrototypeFlipGuardCard`（5枚）：看守をTOP/BOTTOMへ反転します。基準列・柵禁止位置は変わらず、その場で監視・発見は行いません。
+- どちらも自分のプレイヤーターン中、通常行動の前後に手動で使います。通常行動を消費せず、他人のターンや監視への割り込みには使えません。表示名に「仮」を付けています。
+- 手札上限・使用済みへの移動・山札の再利用は既存処理を使います。山札と使用済みが両方空の場合の仕様待機も維持します。
+
+`PrototypeSkillFlowPolicy` は対象をこの2カードと通常行動に限定し、他のカードや対応可能者がいるイベントは正式設定待ちとして拒否します。
 
 ## 看守監視と公開履歴
 
@@ -58,16 +69,19 @@ Unity `6000.6.6f1` / C# の既存プロジェクトです。DEV-TURN-001のゲ�
 | ID | 名称 | 寸法 | マス数 | 初期柵 |
 |---|---|---|---:|---|
 | 01 | オリジナル | 7列×5行 | 25 | 指定5本・確定 |
-| 02 | ロングフィールド | 8列×5行 | 34 | 未確定・開始不可 |
-| 03 | アシンメトリーフィールド | 7列×6行 | 31 | 未確定・開始不可 |
-| 04 | ピラミッドフィールド | 7列×7行 | 35 | 未確定・開始不可 |
-| 05 | 双頭の監獄 | 9列×9行 | 55 | 未確定・開始不可 |
+| 02 | ロング | 8列×5行 | 34 | 指定5本・確定 |
+| 03 | 非対称 | 7列×6行 | 31 | 指定5本・確定 |
+| 04 | 断崖 | 9列×7行 | 44 | 指定7本・確定 |
 
 ステージ01の元資料は行定義の合計24マスと記載総数25マスが不一致でした。ユーザー承認によりY=2の終了Xを4から5へ変更し、25マスと列ごとのマス数 `2・4・5・5・5・3・1` に一致させています。
 
+ステージ03のv1.1本文は32マスですが、提示された行データは31マスです。ユーザー承認により行データを優先して31マスを採用しています。ステージ04は旧ピラミッドをv1.1の断崖へ更新しました。ステージ05の旧アセットは保存用の未確定データとして残し、`includedInSelection=false` で一覧・選択対象から除外します。検討中のスタート再利用制限は01〜04へ適用していません。
+
 `initialFencesDefined=false` は未確定を表し、空配列でも正式な「初期柵なし」とは扱いません。構造参照は可能ですが、`TryValidateForPlay()` が開始を拒否します。正式に柵なしと確定した場合は `true` と空配列を明示します。アセットの `sourceIssue` に確認待ち理由がある場合も開始を拒否します。
 
-新規ステージは `Create > Daidatsugoku > Field Stage` で作成して `Resources/FieldStages` に追加します。ID分岐や描画コードの追加は不要です。構造検証は最小5行・3列、必須値、行の欠落・重複・逆順範囲・範囲外、TOP以外の初期看守、正面3列の欠落、初期柵の非実在・重複・禁止位置を拒否します。カタログに重複IDや不正ステージがある場合も開始を拒否し、自動修正しません。
+新規ステージは `Create > Daidatsugoku > Field Stage` で作成して `Resources/FieldStages` に追加し、`Included In Selection` を有効にします。ID分岐や描画コードの追加は不要です。構造検証は最小5行・3列、必須値、行の欠落・重複・逆順範囲・範囲外、TOP以外の初期看守、正面3列の欠落、初期柵の非実在・重複・禁止位置を拒否します。選択対象のカタログに重複IDや不正ステージがある場合も開始を拒否し、自動修正しません。
+
+実在座標だけに四角いマスを描き、通常マスはグレー、スタートは緑、境界には暗色の枠線を表示します。茶色の柵はマス上辺に置き、マスと文字装飾より高い描画位置で重ねます。座標ラベルは確認用に表示しています。
 
 `GuardVisionSystem` は `GridManager.Field` を唯一の実行時フィールド情報源とし、視界結果から非実在セルを除外します。旧 `GuardVisionFieldDefinition` と `PrototypeGuardVisionField.asset` は既存ファイルとして残しますが、実行時には使用しません。
 
@@ -116,6 +130,8 @@ Unity `6000.6.6f1` / C# の既存プロジェクトです。DEV-TURN-001のゲ�
 | `NormalActionRules.cs` | 通常行動の問い合わせ口と既存盤面用 `PrototypeActionQuery`。 |
 | `SkillCardDefinition.cs` | カード表示・即時属性・対象・発動条件・効果の拡張口。 |
 | `SkillCardPile.cs` | 山札・使用済み・再シャッフル。手札は回収しない。 |
+| `PrototypeDrawOneCard.cs` / `PrototypeFlipGuardCard.cs` | 今回指定の仮ドロー・看守反転カード。 |
+| `PrototypeSkillFlowPolicy.cs` | 仮2カードと通常行動の、対応者0人の場合だけの進行設定。 |
 | `ResponseChain.cs` | 外部指定2人の交互対応・連続パス・LIFO。初回対応者は内部で決めない。 |
 | `TurnFlowPolicy.cs` | 未確定の参加者・初回対応・複数所有者順を外部仕様から渡す。 |
 | `GuardMonitoringDeck.cs` | 非公開の監視山札。監視率の抽選、生成時のシャッフル、1枚消費、山札再生成。 |
@@ -146,7 +162,7 @@ Unity `6000.6.6f1` / C# の既存プロジェクトです。DEV-TURN-001のゲ�
 
 Play 中に `Tools > Daidatsugoku > Run Play Mode Checks` を実行します。対局を初期化し、明示的なテスト用カード・監視供給元・対応方針で検証して、設定を復元します。セーブ・通信・同期は既存 main に存在しません。
 
-最新の実シーン検証は **2,087 assertions PASS** です。フィールドモデル109件、承認済みステージ01の25マス・列別枚数・初期柵5本、全5アセットのマス数と禁止位置、動的盤面・XY変換・上端柵・占有・ステージ選択・拒否条件と、既存ターン・監視・視界・履歴UIの回帰を含みます。Windows64ビルドとPlayer起動確認も成功しました。詳細は `Tools/SYS-FIELD-001-v1.0-report.md` と `Logs/SYS-FIELD-001-validation.txt` を参照してください。
+v1.1と仮カード変更後の実シーン検証は **2,470 assertions PASS** です。実ステージ4つの初期化・描画・占有・座標、仮カードの25/5枚設定・実際の手札使用と、既存ターン・監視・視界・履歴UIを検証しています。詳細は `Tools/SYS-FIELD-001-v1.1-report.md` と `Logs/SYS-FIELD-001-v1.1-validation.txt` です。v1.0段階の2,087件は旧報告に保持しています。
 
 Editor専用フィールドでの検証は正式ステージの代用として出荷しません。実SceneビューのGizmos手操作、本番の個別カードでの通し対局、オンラインは未検証です。
 
@@ -158,6 +174,6 @@ Editor専用フィールドでの検証は正式ステージの代用として�
 & 'C:\Program Files\Unity\Hub\Editor\6000.6.6f1\Editor\Unity.exe' -batchmode -projectPath C:\DevGame\TOKAI2 -executeMethod GuardValidationBatch.RunField -logFile Logs/SYS-FIELD-001-unity.log
 ```
 
-Windows64 Developmentビルドは `-batchmode -quit -executeMethod GuardValidationBatch.BuildFieldPlayer` を使用します。出力は `Builds/SYS-FIELD-001/TOKAI2.exe`、ビルド要約は `Logs/SYS-FIELD-001-build.txt` です。最終のビルド・Player起動結果はフィールド実装報告に記録します。
+Windows64 Developmentビルドは `-batchmode -quit -executeMethod GuardValidationBatch.BuildFieldPlayer` を使用します。出力は `Builds/SYS-FIELD-001-v1.1/TOKAI2.exe`、ビルド要約は `Logs/SYS-FIELD-001-v1.1-build.txt` です。最終のビルド・Player起動結果はフィールド実装報告に記録します。
 
 過去の検証は `Tools/SYS-VISION-001-v1.0-report.md`（1,824件）、`Tools/SYS-GUARD-001-v1.2-report.md`（1,707件）、`Tools/DEV-TURN-001-report.md`（206件）に記録しています。各実装段階の結果であり、今回のフィールド再検証と区別します。今回のPRはユーザーの依頼に従い、baseを明示して `plan-main` に作成します。

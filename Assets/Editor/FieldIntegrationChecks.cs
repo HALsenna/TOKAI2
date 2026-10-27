@@ -24,14 +24,11 @@ public static class FieldIntegrationChecks
         {
             CheckCatalogAssets(game, require);
             CheckDraftSelection(game, require);
-            game.Configure(2, Enumerable.Repeat(inert, 64), null, policy);
-            require(game.SelectStage("01") && game.StartSelectedStage() && !game.IsSelectingStage &&
-                game.Grid.Field.StageId == "01" && game.Grid.Field.CellCount == 25 && game.Grid.FenceCount == 5,
-                "The approved original stage asset must initialize its 25 cells and five fences through selection.");
+            CheckConfirmedStageInitialization(game, inert, policy, require);
             FieldStage stage = NewStage();
             definition.Configure(stage);
             FieldStage authored = definition.ToStage();
-            require(authored.StageId == "CHECK-EXTRA" && authored.Width == 8 && authored.Height == 6 && authored.CellCount == 32,
+            require(definition.IncludedInSelection && authored.StageId == "CHECK-EXTRA" && authored.Width == 8 && authored.Height == 6 && authored.CellCount == 32,
                 "An additional authoring asset must supply a stage without a hardcoded stage-ID branch.");
             require(FieldStageValidator.TryValidateForPlay(authored, out _), "The explicit integration fixture must validate before it is built.");
             game.ConfigureStage(authored); game.Configure(2, Enumerable.Repeat(inert, 64), null, policy);
@@ -58,23 +55,25 @@ public static class FieldIntegrationChecks
 
     private static void CheckCatalogAssets(GameManager game, Action<bool, string> require)
     {
-        int[] expectedCounts = { 25, 34, 31, 35, 55 };
-        FieldCell[][] expectedBans =
+        FieldStage[] expected = ExpectedStages();
+        int[] expectedCounts = { 25, 34, 31, 44 };
+        for (int i = 0; i < expected.Length; i++)
         {
-            new[] { new FieldCell(2,4), new(3,4), new(4,4) },
-            new[] { new FieldCell(2,4), new(3,4), new(4,4) },
-            new[] { new FieldCell(1,5), new(2,5), new(3,5) },
-            new[] { new FieldCell(1,6), new(2,6), new(3,6) },
-            new[] { new FieldCell(3,8), new(4,8), new(5,8) }
-        };
-        for (int i = 0; i < expectedCounts.Length; i++)
-        {
-            string id = (i + 1).ToString("00");
+            FieldStage reference = expected[i]; string id = reference.StageId;
             FieldStage stage = game.Stages.Single(value => value.StageId == id);
+            require(stage.StageName == reference.StageName && stage.Width == reference.Width && stage.Height == reference.Height &&
+                stage.GuardColumn == reference.GuardColumn && stage.GuardSide == GuardSide.Top,
+                "The serialized stage " + id + " must retain its approved name, dimensions and TOP guard column.");
             require(stage.CellCount == expectedCounts[i] && stage.Cells.Count == expectedCounts[i],
-                "The serialized stage " + id + " must have its exact documented cell count.");
-            require(new HashSet<FieldCell>(stage.FenceForbiddenCells).SetEquals(expectedBans[i]),
+                "The serialized stage " + id + " must have its exact approved cell count.");
+            require(stage.Rows.Count == reference.Rows.Count && stage.Rows.All(row => reference.Rows.Any(expectedRow =>
+                row.Y == expectedRow.Y && row.StartX == expectedRow.StartX && row.EndX == expectedRow.EndX)),
+                "The serialized stage " + id + " must retain every exact approved row span.");
+            require(new HashSet<FieldCell>(stage.FenceForbiddenCells).SetEquals(reference.FenceForbiddenCells),
                 "The serialized stage " + id + " must retain its documented fence bans.");
+            require(stage.InitialFencesDefined && stage.InitialFences.Count == reference.InitialFences.Count &&
+                new HashSet<FieldCell>(stage.InitialFences).SetEquals(reference.InitialFences) && game.CanStartStage(stage, out _),
+                "The serialized stage " + id + " must retain its confirmed fence coordinates and allow field initialization.");
         }
         FieldStage original = game.Stages.Single(value => value.StageId == "01");
         int[] columns = { 2, 4, 5, 5, 5, 3, 1 };
@@ -82,29 +81,33 @@ public static class FieldIntegrationChecks
             "The user-approved Y=2 EndX=5 correction must match all seven original column counts.");
         require(original.TryGetRow(2, out FieldRow row) && row.StartX == 1 && row.EndX == 5 && game.CanStartStage(original, out _),
             "The approved original shape must be playable without a source-conflict blocker.");
-        require(original.InitialFencesDefined && new HashSet<FieldCell>(original.InitialFences).SetEquals(new[]
-            { new FieldCell(1,3), new(1,2), new(2,0), new(3,2), new(4,1) }),
-            "The original asset must preserve exactly the five approved initial fences.");
+        FieldStage asymmetric = game.Stages.Single(value => value.StageId == "03");
+        require(asymmetric.TryGetRow(0, out FieldRow bottom) && bottom.EndX == 4 &&
+            asymmetric.TryGetRow(1, out FieldRow next) && next.EndX == 4 && asymmetric.CellCount == 31,
+            "The approved Stage03 row data must remain 31 cells without inventing a 32nd coordinate.");
     }
 
     private static void CheckDraftSelection(GameManager game, Action<bool, string> require)
     {
         var ids = new HashSet<string>(game.Stages.Select(stage => stage.StageId));
-        require(new[] { "01", "02", "03", "04", "05" }.All(ids.Contains) && ids.Count == game.Stages.Count,
-            "The data-driven catalog must contain the five supplied stages.");
+        require(new[] { "01", "02", "03", "04" }.All(ids.Contains) && ids.Count == 4 && ids.Count == game.Stages.Count,
+            "Version1.1 must expose only the four confirmed stages in selection.");
+        FieldStageDefinition excluded = Resources.LoadAll<FieldStageDefinition>("FieldStages").Single(value => value.ToStage().StageId == "05");
+        require(!excluded.IncludedInSelection, "The existing Stage05 draft must be preserved as authoring data and explicitly excluded from selection.");
         game.ShowStageSelection();
         int history = game.Guard.PublicHistory.Count, round = game.Round, pieces = game.Prisoners.Count;
-        foreach (string id in new[] { "02", "03", "04", "05" })
-        {
-            require(game.SelectStage(id) && game.SelectedStage.StageId == id && !game.SelectedStage.InitialFencesDefined,
-                "An unfinished stage must remain identifiable and inspectable in selection.");
-            require(!game.StartSelectedStage() && game.IsSelectingStage && game.State == GameState.Setup,
-                "A stage with unknown initial fences must not start gameplay.");
-            require(game.Round == round && game.Guard.PublicHistory.Count == history && game.Prisoners.Count == pieces,
-                "Selecting or refusing a draft must not initialize a match, consume monitoring or alter pieces.");
-        }
         FieldStage selected = game.SelectedStage;
+        require(!game.SelectStage("05") && ReferenceEquals(game.SelectedStage, selected),
+            "The unconfirmed Stage05 must not be selectable or silently substitute an approved stage.");
         require(!game.SelectStage("UNKNOWN") && ReferenceEquals(game.SelectedStage, selected), "Unknown stage IDs must not silently fall back to another stage.");
+        FieldStage fixture = NewStage();
+        var pending = new FieldStage("CHECK-PENDING", "Explicit unknown-fence fixture", fixture.Width, fixture.Height,
+            fixture.Rows, fixture.GuardColumn, GuardSide.Top, false, Array.Empty<FieldCell>());
+        game.ConfigureStage(pending);
+        require(!game.CanStartStage(pending, out _) && !game.StartSelectedStage() && game.IsSelectingStage && game.State == GameState.Setup,
+            "A custom stage with unknown initial fences must still refuse gameplay, even with an empty fence array.");
+        require(game.Round == round && game.Guard.PublicHistory.Count == history && game.Prisoners.Count == pieces,
+            "Refusing a pending stage must not initialize a match, consume monitoring or alter pieces.");
         game.RestartGame(); game.StartFirstTurn();
         require(game.Phase == TurnPhase.WaitingForSpecification && game.State == GameState.Setup &&
             game.Guard.PublicHistory.Count == history && game.Prisoners.Count == pieces,
@@ -112,6 +115,69 @@ public static class FieldIntegrationChecks
         game.ShowStageSelection(); game.StartFirstTurn();
         require(game.IsSelectingStage && game.Phase == TurnPhase.Setup && game.State == GameState.Setup,
             "The legacy start API must not bypass pre-game stage selection.");
+    }
+
+    private static void CheckConfirmedStageInitialization(GameManager game, TurnCheckCard inert, TurnCheckPolicy policy, Action<bool, string> require)
+    {
+        foreach (FieldStage stage in game.Stages)
+        {
+            game.ShowStageSelection(); game.Configure(2, Enumerable.Repeat(inert, 64), null, policy);
+            require(game.SelectStage(stage.StageId) && game.StartSelectedStage() && !game.IsSelectingStage &&
+                ReferenceEquals(game.Grid.Field, stage), "Every confirmed stage must initialize through the stage selection flow.");
+            require(game.Prisoners.All(prisoner => prisoner.IsInReserve) && Enumerable.Range(0, game.PlayerCount).All(owner => game.OnBoardCount(owner) == 0),
+                "Each confirmed stage must start with zero prisoners on the board.");
+            GridCell[] tiles = game.Grid.GetComponentsInChildren<GridCell>().Where(tile => tile.gameObject.activeInHierarchy).ToArray();
+            require(tiles.Length == stage.CellCount && new HashSet<FieldCell>(tiles.Select(tile => new FieldCell(tile.Cell.x, tile.Cell.y))).SetEquals(stage.Cells),
+                "Every confirmed stage must render exactly its actual cells, without rectangular padding.");
+            Transform[] frames = game.Grid.GetComponentsInChildren<Transform>().Where(value => value.gameObject.activeInHierarchy &&
+                value.name.StartsWith("CellFrame_", StringComparison.Ordinal)).ToArray();
+            require(frames.Length == tiles.Length * 4, "Each actual tile must receive four visible border strips without padding-cell borders.");
+            foreach (GridCell tile in tiles)
+            {
+                Color color = tile.GetComponent<Renderer>().sharedMaterial.color;
+                bool isStart = game.Grid.IsStartCell(tile.Cell);
+                require(isStart ? color.g > color.r && color.g > color.b : Mathf.Max(color.r, color.g, color.b) - Mathf.Min(color.r, color.g, color.b) < .1f,
+                    "Starts must have a green tile surface and normal cells a gray surface.");
+                Transform[] tileFrames = frames.Where(value => value.name.StartsWith($"CellFrame_{tile.Cell.x}_{tile.Cell.y}_", StringComparison.Ordinal)).ToArray();
+                require(tileFrames.Length == 4 && tileFrames.All(value => value.GetComponent<Renderer>().enabled && !value.GetComponent<Collider>().enabled),
+                    "Tile borders must remain visible without stealing cell click input.");
+            }
+            foreach (FieldRow row in stage.Rows)
+                require(game.Grid.IsStartCell(new Vector2Int(row.StartX, row.Y)) && game.Grid.IsExitCell(new Vector2Int(row.EndX, row.Y)),
+                    "Each confirmed row must expose its own exact start and right boundary.");
+            require(game.Grid.FenceCount == stage.InitialFences.Count, "Each confirmed stage must generate exactly the specified number of initial fences.");
+            foreach (FieldCell fence in stage.InitialFences)
+            {
+                var cell = new Vector2Int(fence.X, fence.Y);
+                Transform rendered = game.Grid.GetComponentsInChildren<Transform>().Single(value => value.gameObject.activeInHierarchy &&
+                    value.name == "Fence_" + new FenceBoundary(fence.X, fence.Y));
+                Vector3 position = game.Grid.WorldPosition(cell);
+                require(game.Grid.HasFence(cell) && Mathf.Approximately(rendered.position.x, position.x) &&
+                    Mathf.Approximately(rendered.position.z - position.z, .8f) && rendered.position.y > position.y + .09f,
+                    "Every initial fence must be visible above the board and centered on its cell's upper edge.");
+                if (game.Grid.IsStartCell(cell))
+                {
+                    TextMesh label = game.Grid.GetComponentsInChildren<TextMesh>().Single(value => value.gameObject.activeInHierarchy &&
+                        (value.text == "START" || value.text == "S") && Mathf.Approximately(value.transform.position.x, position.x) &&
+                        Mathf.Abs(value.transform.position.z - position.z) < .6f);
+                    require(label.gameObject.activeInHierarchy && label.transform.position.y < rendered.position.y && game.Grid.CanPlacePrisoner(cell),
+                        "An initial fence at a start must retain its visible start label and free prisoner slot.");
+                }
+            }
+            FieldCell[] bans = stage.FenceForbiddenCells.ToArray();
+            require(game.Vision.Position.Column == stage.GuardColumn && game.Vision.Position.Side == GuardSide.Top,
+                "Each confirmed stage must use its own initial TOP guard column.");
+            game.Vision.Flip();
+            require(game.Vision.Position.Column == stage.GuardColumn && game.Vision.Position.Side == GuardSide.Bottom &&
+                bans.All(cell => game.Grid.IsFenceForbidden(new Vector2Int(cell.X, cell.Y)) && !game.Grid.PlaceFence(new Vector2Int(cell.X, cell.Y))),
+                "Every stage must preserve the initial fence bans and guard column after flipping.");
+            require(stage.Cells.All(cell => game.Grid.IsFenceForbidden(new Vector2Int(cell.X, cell.Y)) == bans.Contains(cell)),
+                "A guard flip must not introduce new bottom-side fence bans.");
+            game.Vision.Flip();
+            FieldCell start = stage.StartCells.First(); var startCell = new Vector2Int(start.X, start.Y);
+            Prisoner escaping = game.Prisoners[0]; escaping.Deploy(startCell); escaping.Escape();
+            require(game.Grid.CanPlacePrisoner(startCell), "An escape must not consume or disable an approved stage's start cell.");
+        }
     }
 
     private static void CheckGeometry(GameManager game, FieldStage stage, Action<bool, string> require)
@@ -259,6 +325,22 @@ public static class FieldIntegrationChecks
     }
 
     private static bool Approximately(Vector3 left, Vector3 right) => (left - right).sqrMagnitude < .00001f;
+
+    private static FieldStage[] ExpectedStages() => new[]
+    {
+        new FieldStage("01", "オリジナル", 7, 5,
+            new[] { new FieldRow(0,0,6), new(1,0,5), new(2,1,5), new(3,1,4), new(4,2,4) }, 3, GuardSide.Top, true,
+            new[] { new FieldCell(1,3), new(1,2), new(2,0), new(3,2), new(4,1) }),
+        new FieldStage("02", "ロング", 8, 5,
+            new[] { new FieldRow(0,0,5), new(1,0,6), new(2,0,7), new(3,0,6), new(4,0,5) }, 3, GuardSide.Top, true,
+            new[] { new FieldCell(1,4), new(4,3), new(5,2), new(4,1), new(2,0) }),
+        new FieldStage("03", "非対称", 7, 6,
+            new[] { new FieldRow(0,0,4), new(1,0,4), new(2,1,6), new(3,1,6), new(4,0,4), new(5,0,3) }, 2, GuardSide.Top, true,
+            new[] { new FieldCell(0,5), new(2,4), new(4,3), new(5,2), new(2,1) }),
+        new FieldStage("04", "断崖", 9, 7,
+            new[] { new FieldRow(0,0,8), new(1,0,8), new(2,0,7), new(3,1,6), new(4,1,5), new(5,2,5), new(6,2,4) }, 3, GuardSide.Top, true,
+            new[] { new FieldCell(2,5), new(4,4), new(3,3), new(5,2), new(2,1), new(6,1), new(4,0) })
+    };
 
     private static FieldStage NewStage() => new("CHECK-EXTRA", "明示的な統合検証用ステージ", 8, 6,
         new[] { new FieldRow(0, 1, 6), new(1, 0, 7), new(2, 2, 6), new(3, 1, 5), new(4, 2, 6), new(5, 3, 5) },

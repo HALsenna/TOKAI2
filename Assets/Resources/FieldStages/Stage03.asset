@@ -13,16 +13,16 @@ MonoBehaviour:
   m_Name: Stage03
   m_EditorClassIdentifier: Assembly-CSharp::Daidatsugoku.FieldStageDefinition
   stageId: 03
-  stageName: "\u30A2\u30B7\u30F3\u30E1\u30C8\u30EA\u30FC\u30D5\u30A3\u30FC\u30EB\u30C9"
+  stageName: "\u975E\u5BFE\u79F0"
   width: 7
   height: 6
   rows:
   - Y: 0
     StartX: 0
-    EndX: 3
+    EndX: 4
   - Y: 1
     StartX: 0
-    EndX: 5
+    EndX: 4
   - Y: 2
     StartX: 1
     EndX: 6
@@ -37,5 +37,17 @@ MonoBehaviour:
     EndX: 3
   guardColumn: 2
   guardSide: 0
-  initialFencesDefined: 0
-  initialFences: []
+  initialFencesDefined: 1
+  initialFences:
+  - X: 0
+    Y: 5
+  - X: 2
+    Y: 4
+  - X: 4
+    Y: 3
+  - X: 5
+    Y: 2
+  - X: 2
+    Y: 1
+  sourceIssue:
+  includedInSelection: 1

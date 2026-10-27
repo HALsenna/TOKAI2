@@ -282,9 +282,39 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Daidatsugoku.GameManager
   playerCount: 3
   guardRevealSeconds: 1.2
-  skillCards: []
+  skillCards:
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: 91d381e99af769c448336578c05120d4, type: 2}
+  - {fileID: 11400000, guid: ad72bb1b7e6e24641b15fd111000ee57, type: 2}
+  - {fileID: 11400000, guid: ad72bb1b7e6e24641b15fd111000ee57, type: 2}
+  - {fileID: 11400000, guid: ad72bb1b7e6e24641b15fd111000ee57, type: 2}
+  - {fileID: 11400000, guid: ad72bb1b7e6e24641b15fd111000ee57, type: 2}
+  - {fileID: 11400000, guid: ad72bb1b7e6e24641b15fd111000ee57, type: 2}
   actionRules: {fileID: 0}
-  flowPolicy: {fileID: 0}
+  flowPolicy: {fileID: 11400000, guid: d3fa84381802fa04d86c2a6e5312199e, type: 2}
 --- !u!114 &1440450519
 MonoBehaviour:
   m_ObjectHideFlags: 0

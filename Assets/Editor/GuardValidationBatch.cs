@@ -17,6 +17,7 @@ public static class GuardValidationBatch
     private static string report;
     private static int captureStage;
     private static string Artifact => SessionState.GetString(Key + ".artifact", "SYS-GUARD-001");
+    private static bool IsField => Artifact.StartsWith("SYS-FIELD-001", StringComparison.Ordinal);
 
     static GuardValidationBatch()
     {
@@ -25,10 +26,12 @@ public static class GuardValidationBatch
 
     public static void Run() => RunFor("SYS-GUARD-001");
     public static void RunVision() => RunFor("SYS-VISION-001");
-    public static void RunField() => RunFor("SYS-FIELD-001");
+    public static void RunField() => RunFor("SYS-FIELD-001-v1.1");
 
     private static void RunFor(string artifact)
     {
+        started = false; report = null; captureStage = 0;
+        SessionState.SetBool(Key + ".captured", false);
         SessionState.SetString(Key + ".artifact", artifact);
         SessionState.SetBool(Key, true);
         SessionState.SetString(Key + ".deadline", DateTime.UtcNow.AddMinutes(5).ToString("O"));
@@ -107,7 +110,7 @@ public static class GuardValidationBatch
                 if (result == "Running" || result == "Not run") return;
                 if (!result.StartsWith("PASS")) throw new InvalidOperationException(result);
                 report = result;
-                if (Artifact == "SYS-FIELD-001")
+                if (IsField)
                 {
                     game.ConfigureStage(null); game.ShowStageSelection(); game.SelectStage("01");
                 }
@@ -117,7 +120,7 @@ public static class GuardValidationBatch
                 return;
             }
             if (EditorApplication.timeSinceStartup < captureAt) return;
-            string path = Artifact == "SYS-FIELD-001" ? $"Logs/{Artifact}-{(captureStage == 0 ? "selection" : "regression")}.png"
+            string path = IsField ? $"Logs/{Artifact}-{(captureStage == 0 ? "selection" : $"stage-{captureStage:00}")}.png"
                 : Artifact == "SYS-VISION-001" ? $"Logs/{Artifact}-{(captureStage == 0 ? "top" : "bottom")}.png" : "Logs/SYS-GUARD-001-history.png";
             if (!SessionState.GetBool(Key + ".captured", false))
             {
@@ -133,16 +136,18 @@ public static class GuardValidationBatch
                 captureAt = EditorApplication.timeSinceStartup + 2;
                 return;
             }
-            if (Artifact == "SYS-FIELD-001" && captureStage == 0)
+            if (IsField && captureStage < 4)
             {
-                if (!game.SelectStage("01")) throw new InvalidOperationException("Original stage is missing.");
-                GuardVisionSceneSetup.PreparePreview(game); captureStage = 1;
+                captureStage++;
+                game.ShowStageSelection();
+                if (!game.SelectStage(captureStage.ToString("00")) || !game.StartSelectedStage())
+                    throw new InvalidOperationException("The confirmed field preview could not start.");
                 SessionState.SetBool(Key + ".captured", false); captureAt = EditorApplication.timeSinceStartup + 2;
                 return;
             }
             string previews = Artifact == "SYS-VISION-001"
                 ? "Vision previews: Logs/SYS-VISION-001-top.png, Logs/SYS-VISION-001-bottom.png"
-                : Artifact == "SYS-FIELD-001" ? "Field previews: Logs/SYS-FIELD-001-selection.png, Logs/SYS-FIELD-001-regression.png"
+                : IsField ? $"Field previews: Logs/{Artifact}-selection.png and Logs/{Artifact}-stage-01.png through stage-04.png"
                 : "History preview: " + path;
             Complete(report + "\n" + previews, 0);
         }
@@ -163,7 +168,7 @@ public static class GuardValidationBatch
 
     public static void BuildPlayer() => BuildPlayerFor("SYS-GUARD-001");
     public static void BuildVisionPlayer() => BuildPlayerFor("SYS-VISION-001");
-    public static void BuildFieldPlayer() => BuildPlayerFor("SYS-FIELD-001");
+    public static void BuildFieldPlayer() => BuildPlayerFor("SYS-FIELD-001-v1.1");
 
     private static void BuildPlayerFor(string artifact)
     {

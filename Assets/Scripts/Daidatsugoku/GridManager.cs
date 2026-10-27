@@ -145,9 +145,10 @@ namespace Daidatsugoku
             foreach (FieldCell fieldCell in Field.Cells)
             {
                 Vector2Int cell = new(fieldCell.X, fieldCell.Y);
-                Color color = (cell.x + cell.y) % 2 == 0 ? new Color(.24f, .30f, .29f) : new Color(.33f, .39f, .36f);
+                Color color = IsStartCell(cell) ? new Color(.18f, .44f, .28f) : new Color(.34f, .36f, .38f);
                 GameObject tile = Primitive(PrimitiveType.Cube, CellName(cell), WorldPosition(cell), new Vector3(1.45f, .15f, 1.45f), color);
                 tile.AddComponent<GridCell>().Initialize(game, cell);
+                DrawCellFrame(cell);
                 Label(CellName(cell), WorldPosition(cell) + new Vector3(-.5f, .09f, -.5f));
                 if (IsStartCell(cell)) Label("START", WorldPosition(cell) + new Vector3(0, .09f, .15f));
             }
@@ -183,7 +184,7 @@ namespace Daidatsugoku
             Vector2Int cell = new(boundary.Column, boundary.Line);
             if (!IsValidBoundary(boundary) || IsFenceForbidden(cell) || HasFence(boundary)) return false;
             Vector3 position = WorldPosition(cell) + new Vector3(0, .3f, Spacing / 2);
-            GameObject fence = Primitive(PrimitiveType.Cube, $"Fence_{boundary}", position, new Vector3(1.45f, .45f, .12f), new Color(.78f, .32f, .31f));
+            GameObject fence = Primitive(PrimitiveType.Cube, $"Fence_{boundary}", position, new Vector3(1.45f, .45f, .12f), new Color(.58f, .33f, .14f));
             fence.AddComponent<FenceClick>().Initialize(game, boundary);
             fences.Add(boundary, fence);
             return true;
@@ -234,6 +235,21 @@ namespace Daidatsugoku
         {
             foreach (FieldCell cell in cells) if (cell.Equals(value)) return true;
             return false;
+        }
+
+        private void DrawCellFrame(Vector2Int cell)
+        {
+            Vector3 center = WorldPosition(cell) + Vector3.up * .085f;
+            Color color = new(.12f, .14f, .16f);
+            for (int side = -1; side <= 1; side += 2)
+            {
+                GameObject horizontal = Primitive(PrimitiveType.Cube, $"CellFrame_{cell.x}_{cell.y}_H{side}",
+                    center + Vector3.forward * (.70f * side), new Vector3(1.45f, .01f, .035f), color);
+                GameObject vertical = Primitive(PrimitiveType.Cube, $"CellFrame_{cell.x}_{cell.y}_V{side}",
+                    center + Vector3.right * (.70f * side), new Vector3(.035f, .01f, 1.45f), color);
+                horizontal.GetComponent<Collider>().enabled = false;
+                vertical.GetComponent<Collider>().enabled = false;
+            }
         }
 
         private GameObject Primitive(PrimitiveType type, string title, Vector3 position, Vector3 scale, Color color)

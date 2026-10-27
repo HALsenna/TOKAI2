@@ -48,3 +48,5 @@ MonoBehaviour:
   guardSide: 0
   initialFencesDefined: 0
   initialFences: []
+  sourceIssue:
+  includedInSelection: 0

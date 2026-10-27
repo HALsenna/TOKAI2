@@ -101,7 +101,7 @@ public static class DaidatsugokuPrototypeChecks
                 if (current.Current is IEnumerator nested) { routines.Push(nested); continue; }
                 return;
             }
-            LastReport = $"PASS: {assertions} assertions; DEV-TURN-001, SYS-GUARD-001 v1.2, SYS-VISION-001 v1.0 and SYS-FIELD-001 v1.0 scene, deck, history, vision, field, integration and HUD checks.";
+            LastReport = $"PASS: {assertions} assertions; DEV-TURN-001, SYS-GUARD-001 v1.2, SYS-VISION-001 v1.0, SYS-FIELD-001 v1.1 and temporary skill-card scene, deck, history, vision, field, integration and HUD checks.";
             Debug.Log(LastReport); Cleanup();
         }
         catch (Exception exception)
@@ -182,6 +182,7 @@ public static class DaidatsugokuPrototypeChecks
     {
         try
         {
+            assertions += PrototypeCardChecks.CheckDefaultDeck(game);
             FieldInfo delay = typeof(GameManager).GetField("guardRevealSeconds", BindingFlags.NonPublic | BindingFlags.Instance);
             Require(delay != null, "Guard reveal delay field missing"); delay.SetValue(game, 0f);
             TurnCheckCard inert = Card("EventOnly", (manager, owner, trigger) => false);
@@ -201,6 +202,7 @@ public static class DaidatsugokuPrototypeChecks
             assertions += GuardSystemChecks.Run(game);
             assertions += FieldStageChecks.Run();
             assertions += FieldIntegrationChecks.Run(game);
+            assertions += PrototypeCardChecks.Run(game);
             CheckVictory(inert); yield return null;
         }
         finally { Restore(); }

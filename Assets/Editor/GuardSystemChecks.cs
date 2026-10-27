@@ -69,7 +69,7 @@ public static class GuardSystemChecks
             game.Configure(2, Enumerable.Repeat(inert, 64), null, policy);
             game.Guard.MonitoringSource = null; game.InitializeGame(); game.StartFirstTurn();
             Prisoner[] pieces = game.Prisoners.Take(2).ToArray();
-            foreach (var piece in pieces) piece.Deploy(Vector2Int.zero);
+            pieces[0].Deploy(Vector2Int.zero); pieces[1].Deploy(Vector2Int.right);
             var vision = new Vision { Visible = pieces[0] }; var failure = new Failure();
             guard.VisionService = vision; guard.PrisonerService = failure;
             require(guard.Resolve(PatrolCard.NotWatching, game.Grid, game.Prisoners) == 0 && vision.Calls == 0 && failure.Targets.Count == 0,

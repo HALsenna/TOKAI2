@@ -11,9 +11,8 @@ namespace Daidatsugoku
     [DisallowMultipleComponent]
     public sealed class GuardVisionSystem : MonoBehaviour, IGuardVisionService, IGuardVisionSnapshotService
     {
-        [SerializeField] private GuardVisionFieldDefinition field;
         private GuardPosition position;
-        public GuardVisionFieldDefinition Field { get => field; set => field = value; }
+        private FieldStage initializedStage;
         // A caller cannot bypass Flip's display/event updates by mutating this snapshot.
         public GuardPosition Position => position == null ? null : new GuardPosition(position.Column, position.Side);
         public event Action PositionChanged;
@@ -21,15 +20,19 @@ namespace Daidatsugoku
         public bool TryResetPosition(out string reason)
         {
             position = null;
-            GetComponent<GridManager>()?.HideGuardPosition();
-            if (!TryValidateField(out reason)) return false;
-            position = new GuardPosition(field.GuardColumn, field.GuardSide);
+            initializedStage = null;
+            GridManager grid = GetComponent<GridManager>();
+            grid?.HideGuardPosition();
+            if (!TryValidateField(grid, out FieldStage stage, out reason)) return false;
+            position = new GuardPosition(stage.GuardColumn, stage.GuardSide);
+            initializedStage = stage;
             UpdatePositionDisplay(); PositionChanged?.Invoke(); return true;
         }
 
         public void Flip()
         {
-            if (position == null) throw new InvalidOperationException("看守の初期位置が未設定です。視界用フィールドを設定して初期化してください。");
+            if (position == null || !ReferenceEquals(initializedStage, GetComponent<GridManager>()?.Field))
+                throw new InvalidOperationException("看守の初期位置が未設定、またはステージが変更されています。選択ステージで初期化してください。");
             position.Flip();
             UpdatePositionDisplay(); PositionChanged?.Invoke();
         }
@@ -38,32 +41,35 @@ namespace Daidatsugoku
         {
             if (grid == null) throw new ArgumentNullException(nameof(grid));
             if (position == null) throw new InvalidOperationException("看守の位置を初期化してから視界を計算してください。");
-            if (!TryValidateField(out string reason)) throw new InvalidOperationException(reason);
-            var visible = GuardVisionCalculator.CalculateVisibleCells(field.RowCount, field.ColumnCount,
+            if (!TryValidateField(grid, out FieldStage stage, out string reason)) throw new InvalidOperationException(reason);
+            if (!ReferenceEquals(stage, initializedStage))
+                throw new InvalidOperationException("選択ステージが変更されています。看守位置を初期化してから視界を計算してください。");
+            var visible = GuardVisionCalculator.CalculateVisibleCells(stage.Height, stage.Width,
                 position.Column, position.Side, grid.GetVisionFrontFences());
-            // Prototype bridge: the current board is a stepped 25-cell map in
-            // a 7x5 global coordinate envelope. Empty positions are not cells.
-            visible.RemoveWhere(cell => !grid.TryGetCell(cell.Column, cell.Row, out _));
+            // The geometry engine counts rows down from TOP. Field XY counts up
+            // from the bottom-left, and only cells in the selected stage exist.
+            visible.RemoveWhere(cell => !grid.TryGetVisionCell(cell.Column, cell.Row, out _));
             return new List<VisionCell>(visible).AsReadOnly();
         }
 
         public bool IsVisible(GridManager grid, Prisoner prisoner)
         {
             if (grid == null || prisoner == null || !prisoner.IsOnBoard || !grid.IsInside(prisoner.Cell)) return false;
-            var cell = new VisionCell(prisoner.Cell.y, grid.GlobalColumn(prisoner.Cell));
+            VisionCell cell = grid.ToVisionCell(prisoner.Cell);
             foreach (VisionCell visible in CalculateVisibleCells(grid)) if (visible.Equals(cell)) return true;
             return false;
         }
 
-        private bool TryValidateField(out string reason)
+        private bool TryValidateField(GridManager grid, out FieldStage stage, out string reason)
         {
-            if (field == null) { reason = "SYS-VISION-001に使用するフィールドデータが未設定です。"; return false; }
-            if (!field.TryValidate(out reason)) return false;
-            if (field.RowCount != GridManager.RowCount || field.ColumnCount != GridManager.Width)
+            stage = grid?.Field;
+            if (grid == null || grid != GetComponent<GridManager>())
             {
-                reason = "視界用フィールドの寸法が既存プロトタイプ盤面の全体座標範囲（7列×5行）と一致しません。フィールドアダプターを確認してください。";
+                reason = "看守と同じフィールドの盤面情報が必要です。";
                 return false;
             }
+            IReadOnlyList<string> errors = FieldStageValidator.Validate(stage);
+            if (errors.Count > 0) { reason = string.Join(" / ", errors); return false; }
             reason = null; return true;
         }
 

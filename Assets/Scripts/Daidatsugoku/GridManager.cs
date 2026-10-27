@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -6,13 +7,6 @@ namespace Daidatsugoku
     public sealed class GridManager : MonoBehaviour
     {
         [SerializeField] private Shader boardShader;
-        public const int Width = 7, RowCount = 5;
-        private static readonly int[] RowLengths = { 3, 4, 5, 6, 7 };
-        private static readonly int[] RowOffsets = { 2, 1, 1, 0, 0 };
-        private static readonly Vector2Int[] StartingFences =
-        {
-            new(0, 1), new(0, 2), new(2, 2), new(4, 3), new(2, 4)
-        };
         private const float Spacing = 1.6f;
         private readonly Dictionary<FenceBoundary, GameObject> fences = new();
         private readonly Dictionary<Color, Material> materials = new();
@@ -21,70 +15,85 @@ namespace Daidatsugoku
         private TextMesh guardPostLabel;
         private GameManager game;
         private Font boardFont;
+        private Camera boardCamera;
+        private int fittedScreenWidth, fittedScreenHeight;
 
-        public int GetRowLength(int row) => row >= 0 && row < RowCount ? RowLengths[row] : 0;
-        public bool IsInside(Vector2Int c) => c.x >= 0 && c.x < GetRowLength(c.y);
-        public bool IsExitCell(Vector2Int c) => IsInside(c) && c.x == GetRowLength(c.y) - 1;
-        public int GlobalColumn(Vector2Int c) => c.x + RowOffsets[c.y];
+        public FieldStage Field { get; private set; }
+        public int Width => Field?.Width ?? 0;
+        public int RowCount => Field?.Height ?? 0;
+
+        public void SetStage(FieldStage stage) => Field = stage ?? throw new ArgumentNullException(nameof(stage));
+        public int GetRowLength(int y) => Field != null && Field.TryGetRow(y, out FieldRow row) ? row.EndX - row.StartX + 1 : 0;
+        public int GetRowStart(int y) => Field != null && Field.TryGetRow(y, out FieldRow row) ? row.StartX : -1;
+        public int GetRowEnd(int y) => Field != null && Field.TryGetRow(y, out FieldRow row) ? row.EndX : -1;
+        public bool IsInside(Vector2Int c) => Field != null && Field.IsInside(new FieldCell(c.x, c.y));
+        public bool IsStartCell(Vector2Int c) => Field != null && Field.IsStart(new FieldCell(c.x, c.y));
+        public bool IsExitCell(Vector2Int c) => Field != null && Field.IsExit(new FieldCell(c.x, c.y));
+        // Prisoner and field coordinates are now the same bottom-left global XY.
+        public int GlobalColumn(Vector2Int c) => c.x;
+        public VisionCell ToVisionCell(Vector2Int c) => new(RowCount - 1 - c.y, c.x);
+        public bool TryGetVisionCell(int column, int topRow, out Vector2Int cell) => TryGetCell(column, RowCount - 1 - topRow, out cell);
+
+        public Prisoner OccupantAt(Vector2Int cell, Prisoner excluding = null)
+        {
+            if (game == null || !IsInside(cell)) return null;
+            foreach (Prisoner prisoner in game.Prisoners)
+                if (prisoner != excluding && prisoner.IsOnBoard && prisoner.Cell == cell) return prisoner;
+            return null;
+        }
+        public bool CanPlacePrisoner(Vector2Int cell) => IsStartCell(cell) && OccupantAt(cell) == null;
         public bool CanMove(Vector2Int from, Vector2Int to)
         {
             if (!IsInside(from) || !IsInside(to)) return false;
             if (from.y == to.y) return to.x == from.x + 1;
-            return Mathf.Abs(to.y - from.y) == 1 && GlobalColumn(from) == GlobalColumn(to);
+            return Mathf.Abs(to.y - from.y) == 1 && from.x == to.x;
         }
-        public string CellName(Vector2Int c) => $"{(char)('A' + c.y)}{c.x}";
-        public Vector3 WorldPosition(Vector2Int c) => transform.position + new Vector3((GlobalColumn(c) - 3) * Spacing, 0, (RowCount - 1 - c.y) * Spacing);
+        public string CellName(Vector2Int c) => $"({c.x},{c.y})";
+        public Vector3 WorldPosition(Vector2Int c) => transform.position + new Vector3((c.x - (Width - 1) * .5f) * Spacing, 0, c.y * Spacing);
         public FenceBoundary BoundaryOf(Vector2Int cell, CellEdge edge)
         {
-            int column = GlobalColumn(cell);
             return edge switch
             {
-                CellEdge.North => new FenceBoundary(column, cell.y),
-                CellEdge.South => new FenceBoundary(column, cell.y + 1),
-                CellEdge.West => new FenceBoundary(column, cell.y, true),
-                _ => new FenceBoundary(column + 1, cell.y, true)
+                CellEdge.North => new FenceBoundary(cell.x, cell.y),
+                CellEdge.South => new FenceBoundary(cell.x, cell.y - 1),
+                CellEdge.West => new FenceBoundary(cell.x, cell.y, true),
+                _ => new FenceBoundary(cell.x + 1, cell.y, true)
             };
         }
-        public bool TryGetCell(int column, int row, out Vector2Int cell)
+        public bool TryGetCell(int column, int y, out Vector2Int cell)
         {
-            cell = new Vector2Int(row >= 0 && row < RowCount ? column - RowOffsets[row] : -1, row);
+            cell = new Vector2Int(column, y);
             return IsInside(cell);
         }
-        public bool IsValidBoundary(FenceBoundary b)
-        {
-            if (b.Vertical) return TryGetCell(b.Column - 1, b.Line, out _) || TryGetCell(b.Column, b.Line, out _);
-            return TryGetCell(b.Column, b.Line - 1, out _) || TryGetCell(b.Column, b.Line, out _);
-        }
+        // A live fence key identifies its cell's upper edge, never a side edge.
+        public bool IsValidBoundary(FenceBoundary b) => !b.Vertical && IsInside(new Vector2Int(b.Column, b.Line));
+        public bool IsFenceForbidden(Vector2Int cell) => Field != null && Contains(Field.FenceForbiddenCells, new FieldCell(cell.x, cell.y));
         public bool HasFence(FenceBoundary b) => fences.ContainsKey(b);
         // Convenience overload: the north boundary of a cell (not cell occupancy).
         public bool HasFence(Vector2Int cell) => IsInside(cell) && HasFence(BoundaryOf(cell, CellEdge.North));
         public bool IsProtected(Vector2Int cell)
         {
             if (!IsInside(cell)) return false;
-            for (int line = 0; line <= cell.y; line++)
-                if (HasFence(new FenceBoundary(GlobalColumn(cell), line))) return true;
+            // Compatibility-only TOP shielding query. Actual discovery uses
+            // SYS-VISION's cone-first calculation with ToVisionCell coordinates.
+            for (int y = cell.y; y < RowCount; y++)
+                if (HasFence(new FenceBoundary(cell.x, y))) return true;
             return false;
         }
         public FenceBoundary BoundaryAtPoint(Vector2Int cell, Vector3 point)
         {
-            Vector3 delta = point - WorldPosition(cell);
-            CellEdge edge = Mathf.Abs(delta.x) > Mathf.Abs(delta.z)
-                ? (delta.x > 0 ? CellEdge.East : CellEdge.West)
-                : (delta.z > 0 ? CellEdge.North : CellEdge.South);
-            return BoundaryOf(cell, edge);
+            // The field specification binds a fence to the clicked cell's top.
+            return BoundaryOf(cell, CellEdge.North);
         }
         public int FenceCount => fences.Count;
 
-        // Temporary bridge from the existing shared-boundary fence model to
-        // SYS-VISION-001's front-of-cell coordinates. A horizontal line is the
-        // front of the cell below it. Vertical/outer-only boundaries are not
-        // front fences; their gameplay rules remain with the field/fence spec.
+        // Vision's rows count down from TOP; stage coordinates count up from Y=0.
         public IReadOnlyCollection<VisionCell> GetVisionFrontFences()
         {
             var result = new List<VisionCell>();
             foreach (FenceBoundary boundary in fences.Keys)
                 if (!boundary.Vertical && TryGetCell(boundary.Column, boundary.Line, out _))
-                    result.Add(new VisionCell(boundary.Line, boundary.Column));
+                    result.Add(new VisionCell(RowCount - 1 - boundary.Line, boundary.Column));
             return result.AsReadOnly();
         }
 
@@ -92,7 +101,7 @@ namespace Daidatsugoku
         {
             if (column < 0 || column >= Width) throw new System.ArgumentOutOfRangeException(nameof(column));
             if (side != GuardSide.Top && side != GuardSide.Bottom) throw new System.ArgumentOutOfRangeException(nameof(side));
-            return transform.position + new Vector3((column - 3) * Spacing, 0, side == GuardSide.Top ? RowCount * Spacing : -Spacing);
+            return transform.position + new Vector3((column - (Width - 1) * .5f) * Spacing, 0, side == GuardSide.Top ? RowCount * Spacing : -Spacing);
         }
 
         public void UpdateGuardPosition(int column, GuardSide side)
@@ -124,26 +133,28 @@ namespace Daidatsugoku
 
         public void Build(GameManager manager)
         {
+            if (manager == null) throw new ArgumentNullException(nameof(manager));
+            if (!FieldStageValidator.TryValidateForPlay(Field, out string reason))
+                throw new InvalidOperationException(reason);
             game = manager;
             if (generated != null) { generated.gameObject.SetActive(false); Destroy(generated.gameObject); }
             guardPost = null; guardPostLabel = null;
             fences.Clear();
             generated = new GameObject("GeneratedBoard").transform;
             generated.SetParent(transform, false);
-            for (int row = 0; row < RowCount; row++)
-            for (int x = 0; x < GetRowLength(row); x++)
+            foreach (FieldCell fieldCell in Field.Cells)
             {
-                Vector2Int cell = new(x, row);
-                Color color = (GlobalColumn(cell) + row) % 2 == 0 ? new Color(.24f, .30f, .29f) : new Color(.33f, .39f, .36f);
+                Vector2Int cell = new(fieldCell.X, fieldCell.Y);
+                Color color = (cell.x + cell.y) % 2 == 0 ? new Color(.24f, .30f, .29f) : new Color(.33f, .39f, .36f);
                 GameObject tile = Primitive(PrimitiveType.Cube, CellName(cell), WorldPosition(cell), new Vector3(1.45f, .15f, 1.45f), color);
                 tile.AddComponent<GridCell>().Initialize(game, cell);
                 Label(CellName(cell), WorldPosition(cell) + new Vector3(-.5f, .09f, -.5f));
-                if (x == 0) Label("START", WorldPosition(cell) + new Vector3(0, .09f, .15f));
+                if (IsStartCell(cell)) Label("START", WorldPosition(cell) + new Vector3(0, .09f, .15f));
             }
-            for (int row = 0; row < RowCount; row++)
+            foreach (FieldCell exit in Field.ExitCells)
             {
-                Vector3 edge = WorldPosition(new Vector2Int(GetRowLength(row) - 1, row)) + new Vector3(.8f, .1f, 0);
-                GameObject goal = Primitive(PrimitiveType.Cube, $"EscapeGoal_{(char)('A' + row)}", edge, new Vector3(.1f, .1f, 1.45f), new Color(.35f, .66f, .49f));
+                Vector3 edge = WorldPosition(new Vector2Int(exit.X, exit.Y)) + new Vector3(.8f, .1f, 0);
+                GameObject goal = Primitive(PrimitiveType.Cube, $"EscapeGoal_{exit.Y}", edge, new Vector3(.1f, .1f, 1.45f), new Color(.35f, .66f, .49f));
                 goal.GetComponent<Collider>().enabled = false;
             }
             guardPost = Primitive(PrimitiveType.Cube, "GuardPost", transform.position, new Vector3(1.45f, .15f, 1.45f), new Color(.17f, .2f, .27f)).transform;
@@ -151,7 +162,11 @@ namespace Daidatsugoku
             guardPostLabel = Label("看守", transform.position);
             // Do not show an invented initial position while field data is absent.
             guardPost.gameObject.SetActive(false); guardPostLabel.gameObject.SetActive(false);
-            foreach (Vector2Int cell in StartingFences) PlaceFence(cell);
+            foreach (FieldCell cell in Field.InitialFences)
+                if (!PlaceFence(new Vector2Int(cell.X, cell.Y)))
+                    throw new InvalidOperationException($"検証済みの初期柵を配置できませんでした：({cell.X},{cell.Y})");
+            boardCamera = Camera.main;
+            FitCamera();
         }
 
         public Prisoner CreatePrisoner(int owner, Vector2Int cell, Color color)
@@ -165,11 +180,10 @@ namespace Daidatsugoku
         public bool PlaceFence(Vector2Int cell) => IsInside(cell) && PlaceFence(BoundaryOf(cell, CellEdge.North));
         public bool PlaceFence(FenceBoundary boundary)
         {
-            if (!IsValidBoundary(boundary) || HasFence(boundary)) return false;
-            Vector3 position = transform.position + new Vector3((boundary.Column - 3) * Spacing, .3f, (RowCount - 1 - boundary.Line) * Spacing);
-            position += boundary.Vertical ? new Vector3(-Spacing / 2, 0, 0) : new Vector3(0, 0, Spacing / 2);
-            Vector3 scale = boundary.Vertical ? new Vector3(.12f, .45f, 1.45f) : new Vector3(1.45f, .45f, .12f);
-            GameObject fence = Primitive(PrimitiveType.Cube, $"Fence_{boundary}", position, scale, new Color(.78f, .32f, .31f));
+            Vector2Int cell = new(boundary.Column, boundary.Line);
+            if (!IsValidBoundary(boundary) || IsFenceForbidden(cell) || HasFence(boundary)) return false;
+            Vector3 position = WorldPosition(cell) + new Vector3(0, .3f, Spacing / 2);
+            GameObject fence = Primitive(PrimitiveType.Cube, $"Fence_{boundary}", position, new Vector3(1.45f, .45f, .12f), new Color(.78f, .32f, .31f));
             fence.AddComponent<FenceClick>().Initialize(game, boundary);
             fences.Add(boundary, fence);
             return true;
@@ -184,20 +198,42 @@ namespace Daidatsugoku
 
         public void RefreshPiecePositions(IReadOnlyList<Prisoner> prisoners)
         {
-            Dictionary<Vector2Int, List<Prisoner>> groups = new();
+            if (prisoners == null) throw new ArgumentNullException(nameof(prisoners));
+            var occupied = new HashSet<Vector2Int>();
             foreach (Prisoner p in prisoners)
             {
                 if (!p.IsOnBoard) continue;
-                if (!groups.TryGetValue(p.Cell, out var list)) { list = new List<Prisoner>(); groups.Add(p.Cell, list); }
-                list.Add(p);
+                if (!IsInside(p.Cell)) throw new InvalidOperationException($"囚人が存在しないマスに配置されています：{CellName(p.Cell)}");
+                if (!occupied.Add(p.Cell)) throw new InvalidOperationException($"1マスに複数の囚人が存在します：{CellName(p.Cell)}");
             }
-            foreach (var entry in groups)
-            {
-                int columns = Mathf.Min(3, entry.Value.Count);
-                int rows = Mathf.CeilToInt(entry.Value.Count / 3f);
-                for (int i = 0; i < entry.Value.Count; i++)
-                    entry.Value[i].transform.position = WorldPosition(entry.Key) + new Vector3((i % 3 - (columns - 1) * .5f) * .4f, .4f, (i / 3 - (rows - 1) * .5f) * .32f);
-            }
+            foreach (Prisoner p in prisoners)
+                if (p.IsOnBoard) p.transform.position = WorldPosition(p.Cell) + Vector3.up * .4f;
+        }
+
+        private void FitCamera()
+        {
+            if (boardCamera == null || !boardCamera.orthographic || Field == null) return;
+            float viewportAspect = Mathf.Max(.01f, Screen.width / (float)Mathf.Max(1, Screen.height)
+                * boardCamera.rect.width / Mathf.Max(.01f, boardCamera.rect.height));
+            float halfHeight = (RowCount + 2f) * Spacing * .5f + .5f;
+            float halfWidth = (Width + 1f) * Spacing * .5f + .5f;
+            boardCamera.orthographicSize = Mathf.Max(halfHeight, halfWidth / viewportAspect);
+            Vector3 position = boardCamera.transform.position;
+            position.x = transform.position.x;
+            position.z = transform.position.z + (RowCount - 1) * Spacing * .5f;
+            boardCamera.transform.position = position;
+            fittedScreenWidth = Screen.width; fittedScreenHeight = Screen.height;
+        }
+
+        private void LateUpdate()
+        {
+            if (generated != null && (Screen.width != fittedScreenWidth || Screen.height != fittedScreenHeight)) FitCamera();
+        }
+
+        private static bool Contains(IReadOnlyCollection<FieldCell> cells, FieldCell value)
+        {
+            foreach (FieldCell cell in cells) if (cell.Equals(value)) return true;
+            return false;
         }
 
         private GameObject Primitive(PrimitiveType type, string title, Vector3 position, Vector3 scale, Color color)

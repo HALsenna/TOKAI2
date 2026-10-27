@@ -16,6 +16,7 @@ namespace Daidatsugoku
         private GameManager game;
         private Font font;
         private GuardHistoryOverlay historyOverlay;
+        private StageSelectionPanel stageSelection;
         public bool IsHistoryOpen => historyOverlay != null && historyOverlay.IsOpen;
         private const int CardsPerPage = 5;
         private Text turn, score, message, mode, handoffText, resultText, handTitle, handHint, pageText, waitingText;
@@ -72,8 +73,11 @@ namespace Daidatsugoku
             result = Panel("ResultPanel", canvasObject.transform, new Color(.03f, .05f, .09f, .96f)).gameObject;
             RectTransform resultCard = CenterCard(result.transform);
             resultText = Label("", resultCard, 30, 35, 540, 140, 28);
-            Button("Restart／もう一度", resultCard, 100, 210, 400, game.RestartGame);
+            Button("ステージ選択へ", resultCard, 100, 210, 400, game.ShowStageSelection);
             handoff.SetActive(false); result.SetActive(false); waiting.SetActive(false); handPanel.SetActive(false);
+
+            var stageObject = new GameObject("StageSelectionPanel", typeof(RectTransform), typeof(StageSelectionPanel));
+            stageSelection = stageObject.GetComponent<StageSelectionPanel>(); stageSelection.Initialize(game, canvasObject.transform, font);
 
             if (EventSystem.current == null)
             {
@@ -147,6 +151,7 @@ namespace Daidatsugoku
             result.SetActive(game.State == GameState.Result);
             resultText.text = game.ResultMessage;
             historyOverlay.Refresh();
+            stageSelection.Refresh();
         }
 
         private bool ForcedHand => game.OverflowPlayer >= 0 || game.Phase == TurnPhase.Response || game.Phase == TurnPhase.GuardResponse;

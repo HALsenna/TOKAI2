@@ -88,7 +88,7 @@ namespace Daidatsugoku
             foreach (Prisoner prisoner in prisoners)
             {
                 if (!prisoner.IsOnBoard || !grid.IsInside(prisoner.Cell)) continue;
-                bool inSight = visible != null ? visible.Contains(new VisionCell(prisoner.Cell.y, grid.GlobalColumn(prisoner.Cell)))
+                bool inSight = visible != null ? visible.Contains(grid.ToVisionCell(prisoner.Cell))
                     : VisionService.IsVisible(grid, prisoner);
                 if (!inSight) continue;
                 targets.Add(prisoner);

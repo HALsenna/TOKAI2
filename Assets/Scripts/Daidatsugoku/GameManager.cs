@@ -23,6 +23,14 @@ namespace Daidatsugoku
         public GridManager Grid { get; private set; }
         public GuardSystem Guard { get; private set; }
         public GuardVisionSystem Vision { get; private set; }
+        private readonly List<FieldStage> stages = new();
+        private IReadOnlyList<string> stageCatalogErrors;
+        private readonly Dictionary<string, string> stageSourceIssues = new();
+        public IReadOnlyList<FieldStage> Stages => stages.AsReadOnly();
+        public FieldStage SelectedStage { get; private set; }
+        public bool IsSelectingStage { get; private set; }
+        public string StageSelectionMessage { get; private set; } = "ステージを選択してください。";
+        public IPrisonerCollisionResolver CollisionResolver { get; set; }
         public int PlayerCount { get; private set; }
         public int CurrentPlayer { get; private set; }
         public int PendingPlayer { get; private set; }
@@ -90,8 +98,51 @@ namespace Daidatsugoku
             Application.runInBackground = true;
             Grid = GetComponent<GridManager>(); Guard = GetComponent<GuardSystem>(); boardRules = new PrototypeActionQuery(this);
             Vision = GetComponent<GuardVisionSystem>() ?? gameObject.AddComponent<GuardVisionSystem>();
+            foreach (var definition in Resources.LoadAll<FieldStageDefinition>("FieldStages"))
+            {
+                var stage = definition.ToStage(); stages.Add(stage);
+                if (!string.IsNullOrWhiteSpace(definition.SourceIssue) && stage.StageId != null) stageSourceIssues[stage.StageId] = definition.SourceIssue;
+            }
+            stages.Sort((a, b) => string.CompareOrdinal(a.StageId, b.StageId));
+            stageCatalogErrors = FieldStageValidator.ValidateCatalog(stages);
         }
-        private void Start() { GetComponent<GameHud>().Initialize(this); RestartGame(); }
+        private void Start() { GetComponent<GameHud>().Initialize(this); ShowStageSelection(); }
+        public void ShowStageSelection()
+        {
+            if (HistoryInputBlocked) return;
+            StopAllCoroutines(); ClearSelection(); State = GameState.Setup; Phase = TurnPhase.Setup;
+            IsSelectingStage = true;
+            StageSelectionMessage = stageCatalogErrors.Count > 0 ? string.Join(" / ", stageCatalogErrors)
+                : stages.Count == 0 ? "ステージデータがありません。" : "ステージを選択してください。";
+            Notify();
+        }
+        public bool SelectStage(string stageId)
+        {
+            if (HistoryInputBlocked || !IsSelectingStage || stageCatalogErrors.Count > 0) return false;
+            FieldStage stage = stages.Find(candidate => candidate.StageId == stageId);
+            if (stage == null) return false;
+            SelectedStage = stage;
+            StageSelectionMessage = CanStartStage(stage, out string reason)
+                ? $"{stage.StageName}：{stage.CellCount}マス。開始できます。" : reason;
+            Notify(); return true;
+        }
+        public bool StartSelectedStage()
+        {
+            if (HistoryInputBlocked || !IsSelectingStage || stageCatalogErrors.Count > 0) return false;
+            if (!CanStartStage(SelectedStage, out string reason))
+            {
+                StageSelectionMessage = reason; Notify(); return false;
+            }
+            IsSelectingStage = false; RestartGame(); return true;
+        }
+        // Configuration takes effect on initialization, not halfway through a match.
+        public void ConfigureStage(FieldStage stage) => SelectedStage = stage;
+        public bool CanStartStage(FieldStage stage, out string reason)
+        {
+            if (stageCatalogErrors.Count > 0) { reason = string.Join(" / ", stageCatalogErrors); return false; }
+            if (stage != null && stage.StageId != null && stageSourceIssues.TryGetValue(stage.StageId, out reason)) return false;
+            return FieldStageValidator.TryValidateForPlay(stage, out reason);
+        }
         public void Configure(int count, IEnumerable<SkillCardDefinition> deck, NormalActionRules actionRules = null, TurnFlowPolicy flowPolicy = null)
         {
             if (count < 2 || count > 4) throw new ArgumentOutOfRangeException(nameof(count));
@@ -109,6 +160,12 @@ namespace Daidatsugoku
 
         public void InitializeGame()
         {
+            if (!CanStartStage(SelectedStage, out string stageReason))
+            {
+                State = GameState.Setup;
+                WaitForSpecification(stageReason, RestartGame); return;
+            }
+            Grid.SetStage(SelectedStage); IsSelectingStage = false;
             StopAllCoroutines(); ClearSelection();
             State = GameState.Setup; Phase = TurnPhase.Setup; Round = 1; Winner = -1;
             Message = ResultMessage = ""; ActionConsumed = ActionDeclared = resolving = beginningTurn = autoPassScheduled = guardTurnStarted = guardMonitoringResolved = false;
@@ -131,7 +188,7 @@ namespace Daidatsugoku
         public void RestartGame() { if (HistoryInputBlocked) return; InitializeGame(); StartFirstTurn(); }
         public void StartFirstTurn()
         {
-            if (State != GameState.Setup) return;
+            if (State != GameState.Setup || Phase != TurnPhase.Setup || IsSelectingStage) return;
             if (visionSetupReason != null) { WaitForSpecification(visionSetupReason, RestartGame); return; }
             BeginTurn(order[0]);
         }
@@ -172,18 +229,19 @@ namespace Daidatsugoku
             return true;
         }
 
-        private bool CanDeploy(Vector2Int cell) => actionRules != null ? actionRules.CanDeploy(this, CurrentPlayer, cell) : boardRules.CanDeploy(CurrentPlayer, cell);
+        private bool CanDeploy(Vector2Int cell) => Grid.CanPlacePrisoner(cell) && (actionRules != null ? actionRules.CanDeploy(this, CurrentPlayer, cell) : boardRules.CanDeploy(CurrentPlayer, cell));
         private bool CanMove(Prisoner p, Vector2Int cell) => p != null && p.Owner == CurrentPlayer && p.IsOnBoard && (actionRules != null ? actionRules.CanMove(this, p, cell) : boardRules.CanMove(p, cell));
         private bool CanEscape(Prisoner p) => p != null && p.Owner == CurrentPlayer && p.IsOnBoard && (actionRules != null ? actionRules.CanEscape(this, p) : boardRules.CanEscape(p));
-        private bool CanFence(FenceBoundary boundary, bool place) => actionRules != null ? actionRules.CanChangeFence(this, CurrentPlayer, boundary, place) : boardRules.CanChangeFence(boundary, place);
+        private bool CanFence(FenceBoundary boundary, bool place) => Grid.IsValidBoundary(boundary)
+            && (!place || !Grid.IsFenceForbidden(new Vector2Int(boundary.Column, boundary.Line)))
+            && (actionRules != null ? actionRules.CanChangeFence(this, CurrentPlayer, boundary, place) : boardRules.CanChangeFence(boundary, place));
         public bool CanPerform(PlayerAction action)
         {
             if (!CanOperate) return false;
             foreach (var p in prisoners) if (action == PlayerAction.Move && CanEscape(p)) return true;
-            for (int y = 0; y < GridManager.RowCount; y++)
-            for (int x = 0; x < Grid.GetRowLength(y); x++)
+            foreach (FieldCell fieldCell in Grid.Field.Cells)
             {
-                Vector2Int cell = new(x, y);
+                Vector2Int cell = new(fieldCell.X, fieldCell.Y);
                 if (action == PlayerAction.PlacePrisoner && CanDeploy(cell)) return true;
                 if (action == PlayerAction.Move) foreach (var p in prisoners) if (CanMove(p, cell)) return true;
                 if (action == PlayerAction.PlaceFence || action == PlayerAction.RemoveFence)
@@ -235,7 +293,20 @@ namespace Daidatsugoku
         {
             if (!CanMove(selected, destination)) return;
             Prisoner piece = selected;
-            Declare(new TurnEvent(TurnEventKind.NormalAction, CurrentPlayer, action: Action, prisoner: piece, destination: destination), () => { if (CanMove(piece, destination)) piece.MoveTo(destination); });
+            Prisoner stationary = Grid.OccupantAt(destination, piece);
+            if (stationary != null && CollisionResolver == null)
+            {
+                WaitForSpecification("移動先に囚人がいます。SYS-PRISONER-001の喧嘩処理を接続してください。", () => MoveSelected(destination));
+                return;
+            }
+            Declare(new TurnEvent(TurnEventKind.NormalAction, CurrentPlayer, action: Action, prisoner: piece, destination: destination), () =>
+            {
+                if (!CanMove(piece, destination)) return;
+                Prisoner occupant = Grid.OccupantAt(destination, piece);
+                if (occupant == null) piece.MoveTo(destination);
+                else if (CollisionResolver == null || !CollisionResolver.TryResolve(this, piece, occupant, destination, out _))
+                    WaitForSpecification("喧嘩処理を解決できませんでした。囚人システムの接続を確認して対局を再開始してください。", null);
+            });
         }
         public void MoveRightOrEscape()
         {
@@ -372,7 +443,12 @@ namespace Daidatsugoku
         private void ApplyOperation()
         {
             var complete = operation;
-            if (complete.ConsumesAction) { complete.Complete(); ActionConsumed = true; ActionDeclared = false; }
+            if (complete.ConsumesAction)
+            {
+                complete.Complete();
+                if (Phase == TurnPhase.WaitingForSpecification) return;
+                ActionConsumed = true; ActionDeclared = false;
+            }
             operation = null; responseTrigger = null;
             CommitEscapes(); Grid.RefreshPiecePositions(prisoners);
             if (CheckVictory()) return;

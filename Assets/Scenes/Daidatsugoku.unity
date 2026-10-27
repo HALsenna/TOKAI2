@@ -365,7 +365,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: fff27073b3914ed9b08166fb73d78bc3, type: 3}
   m_Name:
   m_EditorClassIdentifier: Assembly-CSharp::Daidatsugoku.GuardVisionSystem
-  field: {fileID: 11400000, guid: ce34b92d7f896b84ebf1d20722119e38, type: 2}
 --- !u!1 &1630911836
 GameObject:
   m_ObjectHideFlags: 0

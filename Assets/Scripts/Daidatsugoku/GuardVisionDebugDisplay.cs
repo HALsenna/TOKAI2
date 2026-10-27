@@ -45,11 +45,11 @@ namespace Daidatsugoku
             if (!showVision || grid == null) return;
             Gizmos.color = visibleColor;
             foreach (VisionCell cell in visibleCells)
-                if (grid.TryGetCell(cell.Column, cell.Row, out Vector2Int local))
+                if (grid.TryGetVisionCell(cell.Column, cell.Row, out Vector2Int local))
                     Gizmos.DrawWireCube(grid.WorldPosition(local) + Vector3.up * .18f, new Vector3(1.35f, .12f, 1.35f));
             Gizmos.color = fenceColor;
             foreach (VisionCell cell in fenceCells)
-                if (grid.TryGetCell(cell.Column, cell.Row, out Vector2Int local))
+                if (grid.TryGetVisionCell(cell.Column, cell.Row, out Vector2Int local))
                     Gizmos.DrawWireCube(grid.WorldPosition(local) + new Vector3(0, .35f, .8f), new Vector3(1.45f, .45f, .12f));
             Gizmos.color = Color.white;
             Gizmos.DrawWireCube(guardPosition + Vector3.up * .3f, new Vector3(.8f, .6f, .8f));

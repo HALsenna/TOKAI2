@@ -25,6 +25,7 @@ public static class GuardValidationBatch
 
     public static void Run() => RunFor("SYS-GUARD-001");
     public static void RunVision() => RunFor("SYS-VISION-001");
+    public static void RunField() => RunFor("SYS-FIELD-001");
 
     private static void RunFor(string artifact)
     {
@@ -90,20 +91,34 @@ public static class GuardValidationBatch
             EditorApplication.QueuePlayerLoopUpdate();
             var game = UnityEngine.Object.FindAnyObjectByType<GameManager>();
             if (game == null || game.GetComponentInChildren<GuardHistoryOverlay>(true) == null) return;
-            if (!started) { started = true; DaidatsugokuPrototypeChecks.Run(); return; }
+            if (!started)
+            {
+                started = true;
+                if (game.IsSelectingStage)
+                {
+                    if (!game.SelectStage("01") || !game.StartSelectedStage())
+                        throw new InvalidOperationException("The approved original stage must start without a fallback fixture.");
+                }
+                DaidatsugokuPrototypeChecks.Run(); return;
+            }
             if (report == null)
             {
                 string result = DaidatsugokuPrototypeChecks.LastReport;
                 if (result == "Running" || result == "Not run") return;
                 if (!result.StartsWith("PASS")) throw new InvalidOperationException(result);
                 report = result;
-                if (Artifact == "SYS-VISION-001") GuardVisionSceneSetup.PreparePreview(game);
+                if (Artifact == "SYS-FIELD-001")
+                {
+                    game.ConfigureStage(null); game.ShowStageSelection(); game.SelectStage("01");
+                }
+                else if (Artifact == "SYS-VISION-001") GuardVisionSceneSetup.PreparePreview(game);
                 else GuardSystemChecks.PreparePreview(game);
                 captureAt = EditorApplication.timeSinceStartup + 2;
                 return;
             }
             if (EditorApplication.timeSinceStartup < captureAt) return;
-            string path = Artifact == "SYS-VISION-001" ? $"Logs/{Artifact}-{(captureStage == 0 ? "top" : "bottom")}.png" : "Logs/SYS-GUARD-001-history.png";
+            string path = Artifact == "SYS-FIELD-001" ? $"Logs/{Artifact}-{(captureStage == 0 ? "selection" : "regression")}.png"
+                : Artifact == "SYS-VISION-001" ? $"Logs/{Artifact}-{(captureStage == 0 ? "top" : "bottom")}.png" : "Logs/SYS-GUARD-001-history.png";
             if (!SessionState.GetBool(Key + ".captured", false))
             {
                 ScreenCapture.CaptureScreenshot(path);
@@ -118,8 +133,16 @@ public static class GuardValidationBatch
                 captureAt = EditorApplication.timeSinceStartup + 2;
                 return;
             }
+            if (Artifact == "SYS-FIELD-001" && captureStage == 0)
+            {
+                if (!game.SelectStage("01")) throw new InvalidOperationException("Original stage is missing.");
+                GuardVisionSceneSetup.PreparePreview(game); captureStage = 1;
+                SessionState.SetBool(Key + ".captured", false); captureAt = EditorApplication.timeSinceStartup + 2;
+                return;
+            }
             string previews = Artifact == "SYS-VISION-001"
                 ? "Vision previews: Logs/SYS-VISION-001-top.png, Logs/SYS-VISION-001-bottom.png"
+                : Artifact == "SYS-FIELD-001" ? "Field previews: Logs/SYS-FIELD-001-selection.png, Logs/SYS-FIELD-001-regression.png"
                 : "History preview: " + path;
             Complete(report + "\n" + previews, 0);
         }
@@ -134,11 +157,13 @@ public static class GuardValidationBatch
         catch (Exception exception) { Debug.LogWarning("Could not restore validation Game view: " + exception.Message); }
         SessionState.SetBool(Key, false); SessionState.SetBool(Key + ".captured", false);
         EditorApplication.update -= Tick;
-        EditorApplication.Exit(exitCode);
+        if (Application.isBatchMode) EditorApplication.Exit(exitCode);
+        else EditorApplication.isPlaying = false;
     }
 
     public static void BuildPlayer() => BuildPlayerFor("SYS-GUARD-001");
     public static void BuildVisionPlayer() => BuildPlayerFor("SYS-VISION-001");
+    public static void BuildFieldPlayer() => BuildPlayerFor("SYS-FIELD-001");
 
     private static void BuildPlayerFor(string artifact)
     {

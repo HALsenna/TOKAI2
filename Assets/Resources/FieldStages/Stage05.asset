@@ -1,0 +1,50 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b54b58ad67c14747af493e6c748b4e76, type: 3}
+  m_Name: Stage05
+  m_EditorClassIdentifier: Assembly-CSharp::Daidatsugoku.FieldStageDefinition
+  stageId: 05
+  stageName: "\u53CC\u982D\u306E\u76E3\u7344"
+  width: 9
+  height: 9
+  rows:
+  - Y: 0
+    StartX: 1
+    EndX: 6
+  - Y: 1
+    StartX: 1
+    EndX: 7
+  - Y: 2
+    StartX: 0
+    EndX: 8
+  - Y: 3
+    StartX: 2
+    EndX: 5
+  - Y: 4
+    StartX: 3
+    EndX: 5
+  - Y: 5
+    StartX: 2
+    EndX: 5
+  - Y: 6
+    StartX: 0
+    EndX: 8
+  - Y: 7
+    StartX: 1
+    EndX: 7
+  - Y: 8
+    StartX: 1
+    EndX: 6
+  guardColumn: 4
+  guardSide: 0
+  initialFencesDefined: 0
+  initialFences: []

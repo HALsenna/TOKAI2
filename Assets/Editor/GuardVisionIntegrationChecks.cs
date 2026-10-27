@@ -53,7 +53,7 @@ public static class GuardVisionIntegrationChecks
     {
         LastAssertions = 0;
         var fixtures = new List<ScriptableObject>();
-        GuardVisionFieldDefinition originalField = game.Vision.Field;
+        FieldStage originalField = game.SelectedStage;
         IGuardVisionService originalVision = game.Guard.VisionService;
         IGuardPrisonerService originalPrisoners = game.Guard.PrisonerService;
         GuardCardSource originalSource = game.Guard.MonitoringSource;
@@ -65,7 +65,8 @@ public static class GuardVisionIntegrationChecks
         game.Guard.PrisonersDiscovered += discovery.Receive;
         try
         {
-            var field = Fixture<GuardVisionFieldDefinition>(fixtures);
+            // Explicit rectangular test data; this is not a replacement stage.
+            FieldStage field = Rectangle("CHECK_VISION", 7, 5, 3);
             var inert = Fixture<TurnCheckCard>(fixtures); inert.Condition = (manager, owner, trigger) => false;
             var policy = Fixture<TurnCheckPolicy>(fixtures);
             var watching = Fixture<TurnCheckMonitoring>(fixtures); watching.Card = PatrolCard.WatchAllCells;
@@ -91,28 +92,47 @@ public static class GuardVisionIntegrationChecks
             game.Guard.PrisonersDiscovered -= discovery.Receive;
             debug.ShowVision = originalDebug;
             game.Guard.VisionService = originalVision; game.Guard.PrisonerService = originalPrisoners;
-            game.Guard.MonitoringSource = originalSource; game.Vision.Field = originalField;
+            game.Guard.MonitoringSource = originalSource; game.ConfigureStage(originalField);
             game.Configure(2, Array.Empty<SkillCardDefinition>()); game.InitializeGame();
             if (addedDebug) UnityEngine.Object.DestroyImmediate(debug);
             foreach (ScriptableObject fixture in fixtures) if (fixture != null) UnityEngine.Object.DestroyImmediate(fixture);
         }
     }
 
-    private static void CheckFieldAndPosition(GameManager game, GuardVisionFieldDefinition field)
+    private static void CheckFieldAndPosition(GameManager game, FieldStage field)
     {
+        GameObject isolated = new("CHECK_UninitializedVision", typeof(GridManager), typeof(GuardVisionSystem));
+        try
+        {
+            GridManager grid = isolated.GetComponent<GridManager>();
+            GuardVisionSystem emptyVision = isolated.GetComponent<GuardVisionSystem>();
+            Require(!emptyVision.TryResetPosition(out var missing) && !string.IsNullOrEmpty(missing) && emptyVision.Position == null,
+                "Missing stage configuration must fail explicitly without a random fallback.");
+            grid.SetStage(Rectangle("CHECK_BAD_COLUMN", 7, 5, 7));
+            Require(!emptyVision.TryResetPosition(out var column) && !string.IsNullOrEmpty(column), "An out-of-range guard column must be rejected.");
+            grid.SetStage(Rectangle("CHECK_BAD_SIDE", 7, 5, 3, (GuardSide)99));
+            Require(!emptyVision.TryResetPosition(out _), "Undefined guard sides must be rejected.");
+            grid.SetStage(Rectangle("CHECK_BOTTOM_START", 7, 5, 3, GuardSide.Bottom));
+            Require(!emptyVision.TryResetPosition(out _), "A stage may not initialize its guard at BOTTOM.");
+            grid.SetStage(Rectangle("CHECK_DYNAMIC_SIZE", 8, 6, 4));
+            Require(emptyVision.TryResetPosition(out _) && emptyVision.Position.Column == 4,
+                "Vision must derive dimensions and guard position from the selected stage without a fixed prototype envelope.");
+            Require(emptyVision.CalculateVisibleCells(grid).Count > 0, "A valid different-sized field must calculate vision.");
+            grid.SetStage(field);
+            bool staleRejected = false;
+            try { emptyVision.CalculateVisibleCells(grid); }
+            catch (InvalidOperationException) { staleRejected = true; }
+            Require(staleRejected, "A new stage must not reuse the previous guard initialization.");
+        }
+        finally { UnityEngine.Object.DestroyImmediate(isolated); }
+
         GuardVisionSystem vision = game.Vision;
-        vision.Field = null;
-        Require(!vision.TryResetPosition(out var missing) && !string.IsNullOrEmpty(missing) && vision.Position == null,
-            "Missing field configuration must fail explicitly without a random fallback.");
-        vision.Field = field; field.GuardColumn = field.ColumnCount;
-        Require(!vision.TryResetPosition(out var column) && !string.IsNullOrEmpty(column), "An out-of-range guard column must be rejected.");
-        field.GuardColumn = 3; field.GuardSide = (GuardSide)99;
-        Require(!vision.TryResetPosition(out _), "Only TOP/BOTTOM are valid guard sides.");
-        field.GuardSide = GuardSide.Top; field.RowCount++;
-        Require(!vision.TryResetPosition(out _), "A mismatched prototype field envelope must not be silently adapted.");
-        field.RowCount = GridManager.RowCount;
-        Require(vision.TryResetPosition(out _), "A valid explicit prototype field must initialize.");
+        Require(vision.TryResetPosition(out _), "A valid explicit stage must initialize its guard.");
         Require(vision.Position.Column == 3 && vision.Position.Side == GuardSide.Top, "Initial position must come from the field data.");
+        Require(game.Grid.ToVisionCell(new Vector2Int(3, 4)) == new VisionCell(0, 3) &&
+            game.Grid.ToVisionCell(new Vector2Int(3, 0)) == new VisionCell(4, 3) &&
+            game.Grid.TryGetVisionCell(3, 0, out var topCell) && topCell == new Vector2Int(3, 4),
+            "Bottom-left XY and TOP-origin vision coordinates must map in both directions.");
         int history = game.Guard.PublicHistory.Count;
         Prisoner[] onBoard = game.Prisoners.Where(prisoner => prisoner.IsOnBoard).ToArray();
         vision.Flip();
@@ -137,17 +157,17 @@ public static class GuardVisionIntegrationChecks
     {
         ClearFences(game.Grid);
         var a = new VisionCell(3, 1); var b = new VisionCell(4, 1);
-        Require(game.Vision.CalculateVisibleCells(game.Grid).Contains(a) && game.Vision.CalculateVisibleCells(game.Grid).Contains(b), "The explicit stepped adapter must retain real visible cells.");
-        game.Grid.PlaceFence(new FenceBoundary(1, 1));
+        Require(game.Vision.CalculateVisibleCells(game.Grid).Contains(a) && game.Vision.CalculateVisibleCells(game.Grid).Contains(b), "The selected stage must retain its real visible cells.");
+        Require(game.Grid.PlaceFence(new FenceBoundary(1, 3)), "The off-cone test fence must be legal stage data.");
         Require(game.Vision.CalculateVisibleCells(game.Grid).Contains(a) && game.Vision.CalculateVisibleCells(game.Grid).Contains(b), "A fence outside basic vision must not block deeper visible cells.");
-        game.Grid.PlaceFence(new FenceBoundary(1, 3));
+        Require(game.Grid.PlaceFence(new FenceBoundary(1, 1)), "The in-cone test fence must be legal stage data.");
         Require(!game.Vision.CalculateVisibleCells(game.Grid).Contains(a) && !game.Vision.CalculateVisibleCells(game.Grid).Contains(b), "TOP must block a valid fence's own cell and deeper cells.");
-        game.Grid.RemoveFence(new FenceBoundary(1, 3));
+        game.Grid.RemoveFence(new FenceBoundary(1, 1));
         Require(game.Vision.CalculateVisibleCells(game.Grid).Contains(a) && game.Vision.CalculateVisibleCells(game.Grid).Contains(b), "Destroying the blocking fence must affect the very next calculation.");
-        ClearFences(game.Grid); game.Vision.Flip(); game.Grid.PlaceFence(new FenceBoundary(3, 3));
+        ClearFences(game.Grid); game.Vision.Flip(); game.Grid.PlaceFence(new FenceBoundary(3, 1));
         var bottom = game.Vision.CalculateVisibleCells(game.Grid);
         Require(bottom.Contains(new VisionCell(3, 3)) && !bottom.Contains(new VisionCell(2, 3)), "BOTTOM must keep the fence's cell visible and block only above it.");
-        game.Grid.RemoveFence(new FenceBoundary(3, 3));
+        game.Grid.RemoveFence(new FenceBoundary(3, 1));
         Require(game.Vision.CalculateVisibleCells(game.Grid).Contains(new VisionCell(2, 3)), "BOTTOM must use the latest fence destruction.");
         game.Vision.Flip(); ClearFences(game.Grid);
     }
@@ -160,16 +180,16 @@ public static class GuardVisionIntegrationChecks
         debug.RefreshDebugView();
         var before = new HashSet<VisionCell>(debug.VisibleCells);
         Require(before.SetEquals(game.Vision.CalculateVisibleCells(game.Grid)), "Explicit debug refresh must expose the current final vision snapshot.");
-        game.Grid.PlaceFence(new FenceBoundary(3, 0));
+        Require(game.Grid.PlaceFence(new FenceBoundary(3, 3)), "The debug fence must not use the forbidden upper edge.");
         Require(before.SetEquals(debug.VisibleCells), "Debug drawing must keep its snapshot until explicitly refreshed.");
         debug.ShowVision = true; debug.RefreshDebugView();
-        Require(!before.SetEquals(debug.VisibleCells) && debug.FenceCells.Contains(new VisionCell(0, 3)), "Explicit refresh must include current fences and changed visibility.");
+        Require(!before.SetEquals(debug.VisibleCells) && debug.FenceCells.Contains(new VisionCell(1, 3)), "Explicit refresh must include current fences and changed visibility.");
         Require(game.Round == round && game.State == state && game.Phase == phase && game.Guard.PublicHistory.Count == history && game.Prisoners.All(prisoner => !prisoner.Captured),
             "Debug inspection must not advance turns, draw monitoring or discover prisoners.");
         debug.ShowVision = false; ClearFences(game.Grid);
     }
 
-    private static IEnumerator CheckPendingVision(GameManager game, GuardVisionFieldDefinition field, TurnCheckCard inert,
+    private static IEnumerator CheckPendingVision(GameManager game, FieldStage field, TurnCheckCard inert,
         TurnCheckPolicy policy, TurnCheckMonitoring source, List<ScriptableObject> fixtures, Discovery discovery)
     {
         Setup(game, field, inert, policy, source);
@@ -187,7 +207,7 @@ public static class GuardVisionIntegrationChecks
             "A pending monitoring chain must reveal exactly one card without calculating vision or discovering prisoners.");
         Require(game.Context.Kind == TurnEventKind.GuardMonitoring && game.Context.MonitoringResult == PatrolCard.WatchAllCells,
             "The interruption context must expose its already drawn monitoring result.");
-        game.Vision.Flip(); game.Grid.PlaceFence(new FenceBoundary(3, 4));
+        game.Vision.Flip(); Require(game.Grid.PlaceFence(new FenceBoundary(3, 0)), "The BOTTOM fence must be placed at its field XY upper edge.");
         Require(counting.Snapshots == 0 && discovery.Calls == 0, "Position/fence changes alone must not execute discovery.");
         game.PassResponse(); game.PassResponse();
         yield return Until(() => game.Round == 2, "Resolved monitoring must finish its round.");
@@ -204,7 +224,7 @@ public static class GuardVisionIntegrationChecks
             "Resolution must preserve the flipped state and not redraw or duplicate history.");
     }
 
-    private static IEnumerator CheckCancellation(GameManager game, GuardVisionFieldDefinition field, TurnCheckCard inert,
+    private static IEnumerator CheckCancellation(GameManager game, FieldStage field, TurnCheckCard inert,
         TurnCheckPolicy policy, TurnCheckMonitoring source, List<ScriptableObject> fixtures, Discovery discovery)
     {
         Setup(game, field, inert, policy, source);
@@ -237,24 +257,24 @@ public static class GuardVisionIntegrationChecks
             "Cancellation must preserve the already revealed history without extra consumption.");
     }
 
-    private static void Setup(GameManager game, GuardVisionFieldDefinition field, TurnCheckCard inert, TurnCheckPolicy policy, TurnCheckMonitoring source)
+    private static void Setup(GameManager game, FieldStage field, TurnCheckCard inert, TurnCheckPolicy policy, TurnCheckMonitoring source)
     {
-        field.RowCount = GridManager.RowCount; field.ColumnCount = GridManager.Width; field.GuardColumn = 3; field.GuardSide = GuardSide.Top;
-        game.Vision.Field = field; policy.PlanChains = false;
+        game.ConfigureStage(field); policy.PlanChains = false;
         game.Configure(2, Enumerable.Repeat(inert, 64), null, policy); game.Guard.MonitoringSource = source;
         game.Guard.VisionService = game.Vision; game.Guard.PrisonerService = new PrototypeGuardPrisonerService();
         game.InitializeGame(); ClearFences(game.Grid);
     }
     private static void ClearFences(GridManager grid)
     {
-        foreach (VisionCell cell in grid.GetVisionFrontFences()) grid.RemoveFence(new FenceBoundary(cell.Column, cell.Row));
+        foreach (VisionCell cell in grid.GetVisionFrontFences())
+            if (grid.TryGetVisionCell(cell.Column, cell.Row, out var fieldCell)) grid.RemoveFence(fieldCell);
     }
     private static void FinishPlayerTurns(GameManager game)
     {
         for (int turn = 0; turn < 2; turn++)
         {
             if (turn > 0) game.ConfirmHandoff();
-            game.SelectPlacePrisoner(); game.OnCellClicked(new Vector2Int(6, 4));
+            game.SelectPlacePrisoner(); game.OnCellClicked(new Vector2Int(0, turn));
             Require(game.ActionConsumed, "The explicit test action must consume one normal action."); game.EndTurn();
         }
     }
@@ -266,9 +286,13 @@ public static class GuardVisionIntegrationChecks
     }
     private static void Deploy(GameManager game, Prisoner prisoner, int row, int column)
     {
-        Require(game.Grid.TryGetCell(column, row, out var local), "The explicit prisoner coordinate must exist in the stepped map."); prisoner.Deploy(local);
+        Require(game.Grid.TryGetVisionCell(column, row, out var local), "The explicit vision test coordinate must exist in the selected field."); prisoner.Deploy(local);
+        Require(prisoner.IsOnBoard && prisoner.Cell == local, "The explicit prisoner fixture must be placed without overlapping another prisoner.");
     }
     private static Prisoner Piece(GameManager game, int owner, int index) => game.Prisoners.Where(piece => piece.Owner == owner).ElementAt(index);
+    private static FieldStage Rectangle(string id, int width, int height, int guardColumn, GuardSide side = GuardSide.Top)
+        => new(id, id, width, height, Enumerable.Range(0, height).Select(y => new FieldRow(y, 0, width - 1)),
+            guardColumn, side, true, Array.Empty<FieldCell>());
     private static TurnEvent Root(TurnEvent trigger) { while (trigger?.Parent != null) trigger = trigger.Parent; return trigger; }
     private static int Index(GameManager game, int owner, TurnCheckCard card)
     {

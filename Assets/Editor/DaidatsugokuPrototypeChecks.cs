@@ -101,7 +101,7 @@ public static class DaidatsugokuPrototypeChecks
                 if (current.Current is IEnumerator nested) { routines.Push(nested); continue; }
                 return;
             }
-            LastReport = $"PASS: {assertions} assertions; DEV-TURN-001, SYS-GUARD-001 v1.2 and SYS-VISION-001 v1.0 scene, deck, history, vision, integration and HUD checks.";
+            LastReport = $"PASS: {assertions} assertions; DEV-TURN-001, SYS-GUARD-001 v1.2, SYS-VISION-001 v1.0 and SYS-FIELD-001 v1.0 scene, deck, history, vision, field, integration and HUD checks.";
             Debug.Log(LastReport); Cleanup();
         }
         catch (Exception exception)
@@ -199,6 +199,8 @@ public static class DaidatsugokuPrototypeChecks
             assertions += GuardVisionIntegrationChecks.LastAssertions;
             assertions += GuardDeckChecks.Run();
             assertions += GuardSystemChecks.Run(game);
+            assertions += FieldStageChecks.Run();
+            assertions += FieldIntegrationChecks.Run(game);
             CheckVictory(inert); yield return null;
         }
         finally { Restore(); }
@@ -252,18 +254,16 @@ public static class DaidatsugokuPrototypeChecks
     private static void CheckBoard()
     {
         int cells = 0;
-        for (int row = 0; row < GridManager.RowCount; row++)
+        for (int row = 0; row < game.Grid.RowCount; row++)
         {
-            Require(game.Grid.GetRowLength(row) == row + 3, "Existing stepped row changed"); cells += game.Grid.GetRowLength(row);
-            Require(game.Grid.IsExitCell(new Vector2Int(row + 2, row)), "Existing exit changed");
+            game.Grid.Field.TryGetRow(row, out FieldRow span);
+            Require(game.Grid.GetRowLength(row) == span.EndX - span.StartX + 1, "Stage row span changed"); cells += game.Grid.GetRowLength(row);
+            Require(game.Grid.IsExitCell(new Vector2Int(span.EndX, row)) && game.Grid.IsStartCell(new Vector2Int(span.StartX, row)), "Per-row start/exit changed");
         }
-        Require(cells == 25, "Existing board cell count changed");
-        foreach (Vector2Int cell in new[] { new Vector2Int(0, 1), new Vector2Int(0, 2), new Vector2Int(2, 2), new Vector2Int(4, 3), new Vector2Int(2, 4) }) Require(game.Grid.HasFence(cell), "Existing initial fence changed");
-        FenceBoundary shared = game.Grid.BoundaryOf(new Vector2Int(0, 1), CellEdge.South);
-        Require(shared.Equals(game.Grid.BoundaryOf(new Vector2Int(0, 2), CellEdge.North)), "Shared boundary identity changed");
-        Require(!game.Grid.PlaceFence(shared), "Shared boundary accepted duplicate fence");
-        Require(game.Grid.IsProtected(new Vector2Int(1, 4)) && !game.Grid.IsProtected(Vector2Int.zero), "Existing shielding changed");
-        Require(!game.Grid.CanMove(Vector2Int.zero, new Vector2Int(0, 1)) && game.Grid.CanMove(Vector2Int.zero, new Vector2Int(1, 1)), "Existing offset adjacency changed");
+        Require(cells == game.Grid.Field.CellCount, "Stage cell count changed");
+        foreach (FieldCell cell in game.Grid.Field.InitialFences) Require(game.Grid.HasFence(new Vector2Int(cell.X, cell.Y)), "Stage initial fence missing");
+        foreach (FieldCell cell in game.Grid.Field.FenceForbiddenCells) Require(!game.Grid.PlaceFence(new Vector2Int(cell.X, cell.Y)), "Forbidden fence was accepted");
+        Require(game.Grid.CanMove(Vector2Int.zero, Vector2Int.right) && game.Grid.CanMove(Vector2Int.zero, Vector2Int.up), "Existing prototype movement directions changed");
     }
     private static IEnumerator CheckTurns(SkillCardDefinition inert, TurnCheckPolicy policy, TurnCheckMonitoring quiet)
     {
@@ -275,8 +275,10 @@ public static class DaidatsugokuPrototypeChecks
         game.SelectPlaceFence(); Require(game.Action == PlayerAction.PlaceFence, "Undefined mandatory deployment added");
         game.SelectPlacePrisoner(); game.OnCellClicked(new Vector2Int(-1, 0));
         Require(!game.ActionConsumed && !game.ActionDeclared, "Invalid action consumed/declaration accepted");
-        Piece(order[0]).Deploy(new Vector2Int(4, 3)); game.OnCellClicked(new Vector2Int(4, 3));
-        Require(game.OnBoardCount(order[0]) == 2 && game.Prisoners.Count(piece => piece.Owner == order[0] && piece.Cell == new Vector2Int(4, 3) && piece.IsOnBoard) == 2, "Arbitrary/cohabiting deployment lost");
+        Piece(order[0]).Deploy(Vector2Int.zero); game.OnCellClicked(Vector2Int.zero);
+        Require(!game.ActionConsumed, "Occupied start accepted a second prisoner");
+        game.OnCellClicked(new Vector2Int(game.Grid.GetRowStart(1), 1));
+        Require(game.OnBoardCount(order[0]) == 2 && game.Prisoners.Count(piece => piece.IsOnBoard && piece.Cell == Vector2Int.zero) == 1, "Start placement/occupancy failed");
         Require(game.ActionConsumed && game.Phase == TurnPhase.PlayerInput && game.CurrentPlayer == order[0], "Action automatically ended turn");
         int onBoard = game.OnBoardCount(order[0]); game.OnCellClicked(Vector2Int.zero);
         Require(game.OnBoardCount(order[0]) == onBoard, "Second action accepted");
@@ -285,7 +287,7 @@ public static class DaidatsugokuPrototypeChecks
         for (int index = 1; index < order.Length; index++)
         {
             Require(game.CurrentPlayer == order[index] && game.Hand(order[index]).Count == 1, "Fixed order/turn draw failed");
-            game.SelectPlacePrisoner(); game.OnCellClicked(new Vector2Int(index, 2));
+            game.SelectPlacePrisoner(); game.OnCellClicked(new Vector2Int(game.Grid.GetRowStart(index + 1), index + 1));
             Require(game.ActionConsumed && game.Phase == TurnPhase.PlayerInput, "Action consumption failed"); game.EndTurn();
             if (index < order.Length - 1) { Require(game.Phase == TurnPhase.Handoff, "Handoff missing"); game.ConfirmHandoff(); }
         }
@@ -478,9 +480,9 @@ public static class DaidatsugokuPrototypeChecks
     {
         TurnCheckPolicy policy = Fixture<TurnCheckPolicy>("EscapeResponse"); Begin(2, inert, null, policy);
         int owner = game.CurrentPlayer, opponent = 1 - owner;
-        for (int index = 0; index < 2; index++) { Prisoner piece = Piece(owner, index); piece.Deploy(new Vector2Int(2, 0)); game.ConfirmEscape(piece); }
+        for (int index = 0; index < 2; index++) { Prisoner piece = Piece(owner, index); piece.Deploy(new Vector2Int(game.Grid.GetRowEnd(0), 0)); game.ConfirmEscape(piece); }
         Require(game.EscapedCount(owner) == 2 && game.Winner == -1, "Confirmed escape count before victory failed"); game.ConfirmEscape(Piece(owner)); Require(game.EscapedCount(owner) == 2, "Duplicate escape counted twice");
-        Prisoner last = Piece(owner, 2); last.Deploy(new Vector2Int(2, 0));
+        Prisoner last = Piece(owner, 2); last.Deploy(new Vector2Int(game.Grid.GetRowEnd(0), 0));
         TurnCheckCard response = Card("BeforeEscape", (manager, actor, trigger) => Root(trigger)?.Kind == TurnEventKind.NormalAction); response.Target = owner; Give(opponent, response);
         policy.PlanChains = true; policy.A = owner; policy.B = opponent; policy.First = opponent;
         game.SelectMove(); game.OnPrisonerClicked(last); game.MoveRightOrEscape();

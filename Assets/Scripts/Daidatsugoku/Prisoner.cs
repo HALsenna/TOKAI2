@@ -26,10 +26,13 @@ namespace Daidatsugoku
 
         public void Deploy(Vector2Int cell)
         {
-            if (!IsInReserve) return;
+            if (!IsInReserve || !game.Grid.IsInside(cell) || game.Grid.OccupantAt(cell, this) != null) return;
             Cell = cell; IsInReserve = false; gameObject.SetActive(true);
         }
-        public void MoveTo(Vector2Int cell) => Cell = cell;
+        public void MoveTo(Vector2Int cell)
+        {
+            if (IsOnBoard && game.Grid.IsInside(cell) && game.Grid.OccupantAt(cell, this) == null) Cell = cell;
+        }
         public void SetSelected(bool value) => body.sharedMaterial = game.Grid.GetMaterial(value ? Color.white : color);
         public void Capture() { Captured = true; gameObject.SetActive(false); }
         public void Escape() { Escaped = true; gameObject.SetActive(false); }
